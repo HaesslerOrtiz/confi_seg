@@ -1,0 +1,231 @@
+/*frontend/assets/css/styles.css */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f5f5f5;
+    margin: 0;
+    padding: 0;
+}
+
+header {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    background-color: white;
+    padding: 10px 20px;
+    border-bottom: 1px solid #ccc;
+}
+
+header button {
+    margin-left: 10px;
+    padding: 8px 16px;
+    background-color: #004080;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+header button:hover {
+    background-color: #0066cc;
+}
+
+/* Contenedor principal */
+.main-container {
+    margin: 40px;
+}
+
+/* Título principal */
+.main-container h1 {
+    font-size: 24px;
+    color: black;
+    margin-bottom: 30px;
+}
+
+/* Línea horizontal debajo del título */
+.separator {
+    width: 200px;
+    border: 1px solid black;
+    margin-bottom: 30px;
+}
+
+/* Formulario de inputs principales */
+.form-row {
+    display: flex;
+    gap: 40px;
+    margin-bottom: 30px;
+}
+
+.input-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.input-group label {
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: black;
+}
+
+.input-group input,
+.input-group select {
+    padding: 8px;
+    border: 1px solid #004080;
+    border-radius: 4px;
+    width: 200px;
+    font-size: 14px;
+}
+
+/* Estilo para mensajes de error */
+.error-message {
+    color: red;
+    margin-top: 5px;
+    font-size: 0.9em;
+}
+
+/* Fila dinámica para contenedores de elementos generados */
+.dynamic-row {
+    display: flex;
+    justify-content: flex-start;
+    align-items: flex-start;
+    gap: 300px; /* Igual separación en los contenedores dinámicos */
+    margin-top: 40px;
+}
+
+.dynamic-container {
+    min-width: 300px; 
+    padding: 15px;
+    border: 2px dashed rgba(0, 64, 128, 0.3);
+    border-radius: 8px;
+    margin: 10px;
+}
+
+/* Elementos individuales */
+.dynamic-item {
+    position: relative;
+    margin: 15px;
+    padding: 15px;
+    border: 1px solid #004080;
+    border-radius: 8px;
+    background: white;
+    min-width: 200px;
+}
+
+/* Inputs y selects dentro de dinámicos */
+.dynamic-item input[type="text"],
+.dynamic-item input[type="file"],
+.dynamic-item select {
+    padding: 8px;
+    border: 1px solid #004080;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+/* Estilo especial para correos con sufijo */
+.email-wrapper {
+    display: flex;
+    align-items: center;
+}
+
+.email-wrapper input {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #004080;
+    border-right: none;
+    border-radius: 4px 0 0 4px;
+}
+
+.email-suffix {
+    background-color: #e9ecef;
+    border: 1px solid #004080;
+    border-left: none;
+    padding: 8px;
+    border-radius: 0 4px 4px 0;
+    font-weight: bold;
+    color: #004080;
+    font-size: 14px;
+}
+
+/* Botón bonito para cargar archivo */
+.custom-file-upload {
+    display: inline-block;
+    padding: 6px 12px;
+    cursor: pointer;
+    background-color: #004080;
+    color: white;
+    border-radius: 4px;
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+.custom-file-upload:hover {
+    background-color: #0066cc;
+}
+
+/* Quitar borde dashed innecesario */
+.dynamic-container {
+    border: none !important;
+    min-height: auto !important;
+    padding: 0;
+}
+
+.conectable {
+    position: relative;
+    background: white;
+    z-index: 1;
+}
+
+.leader-line {
+    z-index: 0;
+    pointer-events: auto !important;
+}
+
+.conectable {
+    position: relative;
+    border: 1px solid #004080;
+    padding: 15px;
+    margin: 10px;
+    border-radius: 8px;
+    background: white;
+}
+
+.leader-line {
+    z-index: 1000 !important;
+    pointer-events: auto !important;
+}
+
+.leader-line:hover {
+    cursor: pointer;
+}
+
+.connection-point {
+    width: 16px;
+    height: 16px;
+    background: #004080;
+    border: 2px solid white;
+    border-radius: 50%;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    z-index: 1001; 
+}
+
+.connection-point.left { left: -20px; }
+.connection-point.right { right: -20px; }
+
+.dynamic-container {
+    min-height: 200px;
+    border: none;
+    padding: 20px !important;
+    margin: 15px 0;
+}
+
+.dynamic-item {
+    position: relative;
+    margin: 10px 0;
+    padding: 15px;
+    border: 1px solid #004080;
+    border-radius: 8px;
+    background: white;
+}
+

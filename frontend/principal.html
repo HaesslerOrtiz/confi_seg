@@ -1,0 +1,71 @@
+<!-- frontend/principal.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>ConfiSeg - Crear Proyecto</title>
+  <link rel="stylesheet" href="assets/css/styles.css">
+</head>
+<body>
+
+  <header>
+    <button id="btn-confirm">Confirmar</button>
+    <button id="logoutButton">Salir</button>
+  </header>
+
+  <div class="main-container">
+    <h1>Crear proyecto</h1>
+    <div class="separator"></div>
+
+    <form id="projectForm">
+      <!-- Inputs principales -->
+      <div class="form-row">
+        <div class="input-group">
+          <label for="projectName">Nombre proyecto</label>
+          <input type="text" id="projectName" name="projectName">
+        </div>
+        <div class="input-group">
+          <label for="studentTutor">¿Es estudiante-tutor?</label>
+          <select id="studentTutor" name="studentTutor">
+            <option value="">Seleccione</option>
+            <option value="si">Sí</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label for="ciafLevel">Nivel CIAF</label>
+          <select id="ciafLevel" name="ciafLevel">
+            <option value="">Seleccione</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label for="numImages">Número de imágenes</label>
+          <input type="number" id="numImages" name="numImages" min="0">
+        </div>
+        <div class="input-group">
+          <label for="numGroups">Número de grupos</label>
+          <input type="number" id="numGroups" name="numGroups" min="0">
+        </div>
+        <div class="input-group">
+          <label for="numMembers">Número de miembros</label>
+          <input type="number" id="numMembers" name="numMembers" min="0">
+        </div>
+      </div>
+
+      <!-- Contenedores dinámicos -->
+      <div class="dynamic-row">
+        <div id="imagenesContainer" class="dynamic-container"></div>
+        <div id="gruposContainer" class="dynamic-container"></div>
+        <div id="miembrosContainer" class="dynamic-container"></div>
+      </div>
+    </form>
+  </div>
+
+  <!-- Cargamos LeaderLine primero, luego nuestro JS -->
+  <script src="https://cdn.jsdelivr.net/npm/leader-line-new@1.1.8"></script>
+  <script src="assets/js/principal.js"></script>
+</body>
+</html>
