@@ -8,6 +8,8 @@ from tempfile import TemporaryDirectory
 from backend.database.database import get_connection
 from typing import Optional
 from shapely.geometry import box, mapping
+from utils.qgis_init import inicializar_qgis, finalizar_qgis
+from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer
 import traceback
 import tempfile
 import rasterio
@@ -323,11 +325,13 @@ def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo
             for grupo in mapping_raster.groups:
                 esquemas_destino = {grupo.groupName}
                 esquemas_destino.update(tutores_por_grupo.get(grupo.groupId, set()))
-                tabla_segmentacion = f"{grupo.groupName}{raster_base}"
 
                 for esquema in esquemas_destino:
+                    esquema = esquema.lower()
+                    nombre_tabla = f"{esquema}_{raster_base}"
+
                     cur.execute(f"""
-                        CREATE TABLE IF NOT EXISTS {esquema}."{tabla_segmentacion}" (
+                        CREATE TABLE IF NOT EXISTS {esquema}.{nombre_tabla} (
                             id UUID PRIMARY KEY,
                             {ciaf_field} TEXT,
                             {num_field} INTEGER,
@@ -336,7 +340,7 @@ def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo
                     """)
 
                     cur.execute(f"""
-                        INSERT INTO {esquema}."{tabla_segmentacion}" (id, {ciaf_field}, {num_field}, geom)
+                        INSERT INTO {esquema}.{nombre_tabla} (id, {ciaf_field}, {num_field}, geom)
                         VALUES (%s, %s, %s, ST_GeomFromText(%s, %s));
                     """, (
                         str(uuid.uuid4()),
@@ -346,7 +350,7 @@ def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo
                         srid
                     ))
 
-                    debug_print(f"🧩 Segmentación creada: {esquema}.{tabla_segmentacion}")
+                    debug_print(f"🧩 Segmentación creada: {esquema}_{raster_base}")
 
         conn.commit()
         cur.close()
@@ -354,6 +358,82 @@ def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al crear segmentaciones: {str(e)}")
+
+# Crear proyectos Qgis
+def generar_proyectos_qgis(payload: ProjectExecutionRequest, nombre_db: str, grupo_contenedor: str) -> list:
+    inicializar_qgis()
+
+    resultados = []
+    host = os.getenv("QGIS_SERVER_HOST", "localhost")
+    port = os.getenv("QGIS_SERVER_PORT", "80")
+
+    for mapping_raster in payload.rasterGroupMappings:
+        nombre_raster = os.path.splitext(mapping_raster.imageName)[0].lower()
+        nombre_proyecto = payload.projectName.lower()
+
+        # Ruta para entorno de desarrollo
+        dev_base = os.getenv("QGIS_PROJECTS_DEV_PATH", "C:/proyectos/dev_qgis_projects")
+        carpeta_raster = os.path.join(dev_base, nombre_proyecto, nombre_raster)
+
+        # Ruta para entorno de producción (descomentar cuando se implemente)
+        # carpeta_raster = f"/cgi-bin/Segmentations/{nombre_proyecto}/{nombre_raster}"
+
+        os.makedirs(carpeta_raster, exist_ok=True)
+        ruta_qgz = os.path.join(carpeta_raster, f"{nombre_raster}.qgz")
+
+        # Eliminar proyecto previo si existe
+        if os.path.exists(ruta_qgz):
+            os.remove(ruta_qgz)
+
+        # Crear nuevo proyecto
+        proyecto = QgsProject.instance()
+        proyecto.clear()
+
+        # Capa ráster
+        capa_raster = QgsRasterLayer(
+            f"dbname='{nombre_db}' table=\"{grupo_contenedor}\".\"{nombre_raster}\"", nombre_raster, "postgresraster"
+        )
+        if capa_raster.isValid():
+            proyecto.addMapLayer(capa_raster)
+        else:
+            debug_print(f"⚠️ Capa ráster inválida: {grupo_contenedor}.{nombre_raster}")
+
+        # Esquemas donde hay segmentaciones de este ráster
+        esquemas_relevantes = set()
+        for grupo in mapping_raster.groups:
+            esquemas_relevantes.add(grupo.groupName)
+            for rel in payload.memberGroupMappings:
+                if rel.groupId == grupo.groupId:
+                    miembro = next((m for m in payload.members if m.id == rel.memberId and m.role == "Tutor"), None)
+                    if miembro:
+                        esquemas_relevantes.add(miembro.email.split("@")[0].lower())
+
+        # Agregar capas vectoriales (segmentaciones)
+        for esquema in esquemas_relevantes:
+            tabla_segmentacion = f"{esquema}_{nombre_raster}"
+            capa_vector = QgsVectorLayer(
+                f"dbname='{nombre_db}' table=\"{esquema}\".\"{tabla_segmentacion}\"", tabla_segmentacion, "postgres"
+            )
+            if capa_vector.isValid():
+                proyecto.addMapLayer(capa_vector)
+            else:
+                debug_print(f"⚠️ Capa vectorial inválida: {esquema}_{nombre_raster}")
+
+        # Guardar archivo .qgz
+        proyecto.write(ruta_qgz)
+
+        # Generar URL servantMap (siempre válida en ambos entornos)
+        servant_map = f"https://{host}:{port}/cgi-bin/Segmentations/{nombre_proyecto}/{nombre_raster}/qgis_mapserv.fcgi"
+
+        resultados.append({
+            "imagen": mapping_raster.imageName,
+            "servantMap": servant_map
+        })
+
+        debug_print(f"📄 Proyecto QGIS generado: {ruta_qgz}")
+
+    finalizar_qgis()
+    return resultados
 
 # Crear miembros y roles
 def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str):
@@ -501,17 +581,17 @@ async def upload_tiffs(projectName: str = Form(...), files: List[UploadFile] = F
     try:
         global UPLOAD_DIR
 
-        # Carpeta base configurable (por defecto: /tmp)
-        temp_base = os.getenv("TEMP_UPLOAD_DIR", "/tmp")
+        # === Selección de entorno ===
+        # Entorno de desarrollo (comentar en producción)
+        UPLOAD_DIR = tempfile.mkdtemp(prefix="tiff_uploads_")
 
-        # Crear carpeta temporal si no existe
-        if UPLOAD_DIR is None:
-            # Para producción se puede usar una ruta fija definida en el archivo .env
-            # UPLOAD_DIR = tempfile.mkdtemp(prefix="tiff_uploads_", dir=os.getenv("TEMP_UPLOAD_DIR", "/tmp"))
-            UPLOAD_DIR = tempfile.mkdtemp(prefix="tiff_uploads_")
-            debug_print(f"🗂️ Carpeta temporal creada: {UPLOAD_DIR}")
+        # Entorno de producción (descomentar para usar)
+        # base_dir = os.getenv("TEMP_UPLOAD_DIR", "/var/tmp/tiff_cargas")
+        # UPLOAD_DIR = tempfile.mkdtemp(prefix="tiff_uploads_", dir=base_dir)
 
-        # Validaciones básicas
+        debug_print(f"🗂️ Carpeta temporal creada: {UPLOAD_DIR}")
+
+        # === 📂 Validaciones de archivos ===
         allowed_exts = ['tif', 'tiff']
         nombre_invalido = re.compile(r'^[a-z0-9_]+$')
 
@@ -534,7 +614,6 @@ async def upload_tiffs(projectName: str = Form(...), files: List[UploadFile] = F
                 content = await file.read()
                 out_file.write(content)
 
-            # Registrar archivo procesado
             debug_print(f"📄 TIFF recibido y guardado: {filename}")
 
         return {"success": True}
@@ -603,6 +682,15 @@ async def create_project(payload: ProjectExecutionRequest):
             )
         
         crear_segmentaciones(payload, payload.projectName)
+        # 🛰️ Generar proyectos QGIS por imagen
+        try:
+            resumen_qgis = generar_proyectos_qgis(payload, payload.projectName, payload.grupoContenedor)
+            debug_print("✅ Proyectos QGIS generados:")
+            for r in resumen_qgis:
+                debug_print(f"- {r['imagen']} → {r['servantMap']}")
+        except Exception as e_qgis:
+            raise HTTPException(status_code=500, detail=f"Error al generar los proyectos QGIS: {str(e_qgis)}")
+
 
         return {
             "success": True,
