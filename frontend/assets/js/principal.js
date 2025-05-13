@@ -13,15 +13,6 @@ function getLeaderLineSvg(linea) {
   });
 }
 
-//Eliminar relación/línea
-document.addEventListener('keydown', e => {
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedKey) {
-    const { linea } = connections.get(selectedKey);
-    linea.remove();
-    connections.delete(selectedKey);
-    selectedKey = null;
-  }
-});
 
 //Funcionalidad boton Salir
 document.addEventListener('DOMContentLoaded', () => {
@@ -51,7 +42,16 @@ document.addEventListener('DOMContentLoaded', () => {
   let originPoint = null;
   let selectedKey = null;
   window.connections = new Map(); // "fromId|toId" → { linea, fromId, toId }
-  
+  //Eliminar relación/línea
+  document.addEventListener('keydown', e => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedKey) {
+      const { linea } = connections.get(selectedKey);
+      linea.remove();
+      connections.delete(selectedKey);
+      selectedKey = null;
+    }
+  });
+
   // Elimina todas las líneas existentes|
   function clearAllLines() {
     connections.forEach(({ linea }) => {
@@ -498,7 +498,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // 🚨 Validar que cada grupo tenga al menos una imagen relacionada
+    // Validar que cada grupo tenga al menos una imagen relacionada
     const gruposSinImagen = [];
     for (let i = 0; i < numGroups; i++) {
       const idGrupo = `grupo-${i}`;
@@ -519,7 +519,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // 🚨 Validar que cada grupo tenga al menos un miembro relacionado
+    // Validar que cada grupo tenga al menos un miembro relacionado
     const gruposSinMiembro = [];
     for (let i = 0; i < numGroups; i++) {
       const idGrupo = `grupo-${i}`;
@@ -535,7 +535,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // 🚨 Validar que cada miembro esté relacionado a al menos un grupo (excepto Tutor o Líder)
+    // Validar que cada miembro esté relacionado a al menos un grupo (excepto Tutor o Líder)
     const miembrosSinGrupo = [];
     for (let i = 0; i < numMembers; i++) {
       const idMiembro = `miembro-${i}`;
@@ -651,10 +651,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Construir FormData con archivos TIFF cargados
       const formData = new FormData();
+      formData.append("projectName", nombreFinalProyecto);
       imagenWrappers.forEach((input, i) => {
         const file = input.files[0];
         if (file) {
-          formData.append(`tiff${i}`, file);
+          formData.append("files", file);
         }
       });
 
@@ -685,6 +686,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Creación final del proyecto
   try {
+    console.log("Final Payload JSON:", JSON.stringify(finalPayload, null, 2));
     const createResponse = await fetch('/api/projects/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -703,22 +705,31 @@ document.addEventListener('DOMContentLoaded', () => {
       return;     
     }
 
-    if (!createResponse.ok || !createResult.success) {
-      // Si hay errores específicos en las imágenes
-      if (Array.isArray(createResult.errores)) {
-        let mensaje = "❌ El proyecto no se creó por errores en las imágenes:\n\n";
-        for (const err of createResult.errores) {
-          const descripcion = err.error || "Error desconocido";
-          mensaje += `• ${err.imagen}: ${descripcion}\n`;
-        }
-        alert(mensaje);
-      } else {
-        // Otro tipo de error
-        const errorMsg = createResult.detail || createResult.msg || "Error desconocido.";
-        alert("❌ Error al crear el proyecto:\n\n" + errorMsg);
-      }
-      return;
-    } 
+if (!createResponse.ok || !createResult.success) {
+  const erroresImagenes = Array.isArray(createResult.errores) && createResult.errores.length > 0;
+
+  if (erroresImagenes) {
+    let mensaje = "❌ El proyecto no se creó por errores en las imágenes:\n\n";
+    for (const err of createResult.errores) {
+      const descripcion = err.error || "Error desconocido";
+      mensaje += `• ${err.imagen}: ${descripcion}\n`;
+    }
+    alert(mensaje);
+  } else {
+    let mensaje = "❌ Error en la creación del proyecto.";
+
+    if (createResult.detail || createResult.msg) {
+      mensaje += "\n\n" + (createResult.detail || createResult.msg);
+    } else {
+      mensaje += "\n\nNo se recibió un mensaje claro del servidor. Revisa la consola o contacta al administrador.";
+    }
+
+    console.error("Error completo recibido del backend:", createResult);
+    alert(mensaje);
+  }
+
+  return;
+}
 
     // ✅ Éxito
     let resumen = "✅ Proyecto creado exitosamente.\n";

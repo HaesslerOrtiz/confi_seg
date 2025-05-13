@@ -5,7 +5,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from backend.routers import login
 from backend.routers import projects
-from backend.routers import projects
 import os
 
 app = FastAPI()

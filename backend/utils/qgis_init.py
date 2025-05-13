@@ -2,25 +2,20 @@
 import os
 import sys
 
-def load_dotenv():
-    dotenv_path = ".env"
-    if os.path.exists(dotenv_path):
-        with open(dotenv_path) as f:
-            for line in f:
-                if "=" in line:
-                    key, val = line.strip().split("=", 1)
-                    os.environ[key] = val
-
 qgs = None  # Objeto de aplicación QGIS compartido
 
 def inicializar_qgis():
-    """
-    Inicializa QGIS con base en la ruta definida en QGIS_PREFIX_PATH (por .env).
-    Lanza una excepción si QGIS no está disponible.
-    """
+    #Inicializa QGIS con base en la ruta definida en QGIS_PREFIX_PATH (por .env). 
+    # Lanza una excepción si QGIS no está disponible.
+
     global qgs
 
-    load_dotenv()
+    # ⚠️ Cargar .env si la variable necesaria aún no está presente
+    if not os.getenv("QGIS_PREFIX_PATH"):
+        from dotenv import load_dotenv
+        load_dotenv()
+        print("⚠️ QGIS_PREFIX_PATH no estaba definido. Se cargó desde .env")
+
     QGIS_PREFIX_PATH = os.getenv("QGIS_PREFIX_PATH")
 
     if not QGIS_PREFIX_PATH:
