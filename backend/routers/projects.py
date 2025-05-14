@@ -8,7 +8,6 @@ from collections import Counter
 from backend.database.database import get_connection
 from typing import Optional
 from shapely.geometry import box, mapping
-from backend.utils.qgis_init import inicializar_qgis, finalizar_qgis
 from datetime import datetime
 import traceback
 import tempfile
@@ -257,7 +256,7 @@ def importar_rasters(nombre_db: str, raster_mappings: List[RasterGroupMapping], 
                     check=True
                 )
 
-                debug_print(f"✅ Finalizó ejecución de psql para {table_name}")
+                debug_print(f"Finalizó ejecución de psql para {table_name}")
                 duracion = time.perf_counter() - inicio
                 resultados.append({
                     "imagen": image_name,
@@ -365,79 +364,83 @@ def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo
 
 # Crear proyectos Qgis
 def generar_proyectos_qgis(payload: ProjectExecutionRequest, nombre_db: str, grupo_contenedor: str) -> list:
+    from backend.utils.qgis_init import inicializar_qgis, finalizar_qgis
     inicializar_qgis()
-    from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer
-    resultados = []
-    host = os.getenv("QGIS_SERVER_HOST", "localhost")
-    port = os.getenv("QGIS_SERVER_PORT", "80")
+    try:
+        from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer
+        resultados = []
+        host = os.getenv("QGIS_SERVER_HOST", "localhost")
+        port = os.getenv("QGIS_SERVER_PORT", "80")
 
-    for mapping_raster in payload.rasterGroupMappings:
-        nombre_raster = os.path.splitext(mapping_raster.imageName)[0].lower()
-        nombre_proyecto = payload.projectName.lower()
+        for mapping_raster in payload.rasterGroupMappings:
+            nombre_raster = os.path.splitext(mapping_raster.imageName)[0].lower()
+            nombre_proyecto = payload.projectName.lower()
 
-        # Ruta para entorno de desarrollo
-        dev_base = os.getenv("QGIS_PROJECTS_DEV_PATH", "C:/proyectos/dev_qgis_projects")
-        carpeta_raster = os.path.join(dev_base, nombre_proyecto, nombre_raster)
+            # Ruta para entorno de desarrollo
+            dev_base = os.getenv("QGIS_PROJECTS_DEV_PATH", "C:/proyectos/dev_qgis_projects")
+            carpeta_raster = os.path.join(dev_base, nombre_proyecto, nombre_raster)
 
-        # Ruta para entorno de producción (descomentar cuando se implemente)
-        # carpeta_raster = f"/cgi-bin/Segmentations/{nombre_proyecto}/{nombre_raster}"
+            # Ruta para entorno de producción (descomentar cuando se implemente)
+            # carpeta_raster = f"/cgi-bin/Segmentations/{nombre_proyecto}/{nombre_raster}"
 
-        os.makedirs(carpeta_raster, exist_ok=True)
-        ruta_qgz = os.path.join(carpeta_raster, f"{nombre_raster}.qgz")
+            os.makedirs(carpeta_raster, exist_ok=True)
+            ruta_qgz = os.path.join(carpeta_raster, f"{nombre_raster}.qgz")
 
-        # Eliminar proyecto previo si existe
-        if os.path.exists(ruta_qgz):
-            os.remove(ruta_qgz)
+            # Eliminar proyecto previo si existe
+            if os.path.exists(ruta_qgz):
+                os.remove(ruta_qgz)
 
-        # Crear nuevo proyecto
-        proyecto = QgsProject.instance()
-        proyecto.clear()
+            # Crear nuevo proyecto
+            proyecto = QgsProject.instance()
+            proyecto.clear()
 
-        # Capa ráster
-        capa_raster = QgsRasterLayer(
-            f"dbname='{nombre_db}' table=\"{grupo_contenedor}\".\"{nombre_raster}\"", nombre_raster, "postgresraster"
-        )
-        if capa_raster.isValid():
-            proyecto.addMapLayer(capa_raster)
-        else:
-            debug_print(f" Capa ráster inválida: {grupo_contenedor}.{nombre_raster}")
-
-        # Esquemas donde hay segmentaciones de este ráster
-        esquemas_relevantes = set()
-        for grupo in mapping_raster.groups:
-            esquemas_relevantes.add(grupo.groupName)
-            for rel in payload.memberGroupMappings:
-                if rel.groupId == grupo.groupId:
-                    miembro = next((m for m in payload.members if m.id == rel.memberId and m.role == "Tutor"), None)
-                    if miembro:
-                        esquemas_relevantes.add(miembro.email.split("@")[0].lower())
-
-        # Agregar capas vectoriales (segmentaciones)
-        for esquema in esquemas_relevantes:
-            tabla_segmentacion = f"{esquema}_{nombre_raster}"
-            capa_vector = QgsVectorLayer(
-                f"dbname='{nombre_db}' table=\"{esquema}\".\"{tabla_segmentacion}\"", tabla_segmentacion, "postgres"
+            # Capa ráster
+            capa_raster = QgsRasterLayer(
+                f"dbname='{nombre_db}' table=\"{grupo_contenedor}\".\"{nombre_raster}\"", nombre_raster, "postgresraster"
             )
-            if capa_vector.isValid():
-                proyecto.addMapLayer(capa_vector)
+            if capa_raster.isValid():
+                proyecto.addMapLayer(capa_raster)
             else:
-                debug_print(f" Capa vectorial inválida: {esquema}_{nombre_raster}")
+                debug_print(f" Capa ráster inválida: {grupo_contenedor}.{nombre_raster}")
 
-        # Guardar archivo .qgz
-        proyecto.write(ruta_qgz)
+            # Esquemas donde hay segmentaciones de este ráster
+            esquemas_relevantes = set()
+            for grupo in mapping_raster.groups:
+                esquemas_relevantes.add(grupo.groupName)
+                for rel in payload.memberGroupMappings:
+                    if rel.groupId == grupo.groupId:
+                        miembro = next((m for m in payload.members if m.id == rel.memberId and m.role == "Tutor"), None)
+                        if miembro:
+                            esquemas_relevantes.add(miembro.email.split("@")[0].lower())
 
-        # Generar URL servantMap (siempre válida en ambos entornos)
-        servant_map = f"https://{host}:{port}/cgi-bin/Segmentations/{nombre_proyecto}/{nombre_raster}/qgis_mapserv.fcgi"
+            # Agregar capas vectoriales (segmentaciones)
+            for esquema in esquemas_relevantes:
+                tabla_segmentacion = f"{esquema}_{nombre_raster}"
+                capa_vector = QgsVectorLayer(
+                    f"dbname='{nombre_db}' table=\"{esquema}\".\"{tabla_segmentacion}\"", tabla_segmentacion, "postgres"
+                )
+                if capa_vector.isValid():
+                    proyecto.addMapLayer(capa_vector)
+                else:
+                    debug_print(f" Capa vectorial inválida: {esquema}_{nombre_raster}")
 
-        resultados.append({
-            "imagen": mapping_raster.imageName,
-            "servantMap": servant_map
-        })
+            # Guardar archivo .qgz
+            proyecto.write(ruta_qgz)
 
-        debug_print(f"📄 Proyecto QGIS generado: {ruta_qgz}")
+            # Generar URL servantMap (siempre válida en ambos entornos)
+            servant_map = f"https://{host}:{port}/cgi-bin/Segmentations/{nombre_proyecto}/{nombre_raster}/qgis_mapserv.fcgi"
 
-    finalizar_qgis()
-    return resultados
+            resultados.append({
+                "imagen": mapping_raster.imageName,
+                "servantMap": servant_map
+            })
+
+            debug_print(f"Proyecto QGIS generado: {ruta_qgz}")
+
+        return resultados
+    
+    finally:
+        finalizar_qgis()
 
 # Crear miembros y roles
 def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str, fecha_actual: str):
@@ -633,7 +636,7 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
         conn.commit()
         cur.close()
         conn.close()
-        debug_print("✅ Tabla parametros_configuracion creada y registros insertados correctamente.")
+        debug_print("Tabla parametros_configuracion creada y registros insertados correctamente.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al crear configuración del proyecto: {str(e)}")
 
@@ -791,9 +794,9 @@ async def upload_tiffs(projectName: str = Form(...), files: List[UploadFile] = F
         # base_dir = os.getenv("TEMP_UPLOAD_DIR", "/var/tmp/tiff_cargas")
         # UPLOAD_DIR = tempfile.mkdtemp(prefix="tiff_uploads_", dir=base_dir)
 
-        debug_print(f"🗂️ Carpeta temporal creada: {UPLOAD_DIR}")
+        debug_print(f"Carpeta temporal creada: {UPLOAD_DIR}")
 
-        # === 📂 Validaciones de archivos ===
+        # === Validaciones de archivos ===
         allowed_exts = ['tif', 'tiff']
         nombre_invalido = re.compile(r'^[a-z0-9_]+$')
 
@@ -816,7 +819,7 @@ async def upload_tiffs(projectName: str = Form(...), files: List[UploadFile] = F
                 content = await file.read()
                 out_file.write(content)
 
-            debug_print(f"📄 TIFF recibido y guardado: {filename}")
+            debug_print(f"TIFF recibido y guardado: {filename}")
 
         return {"success": True}
 
@@ -891,7 +894,7 @@ async def create_project(payload: ProjectExecutionRequest):
         # 🛰️ Generar proyectos QGIS por imagen
         try:
             resumen_qgis = generar_proyectos_qgis(payload, payload.projectName, payload.grupoContenedor)
-            debug_print("✅ Proyectos QGIS generados:")
+            debug_print("Proyectos QGIS generados:")
             for r in resumen_qgis:
                 debug_print(f"- {r['imagen']} → {r['servantMap']}")
         except Exception as e_qgis:
@@ -900,7 +903,7 @@ async def create_project(payload: ProjectExecutionRequest):
         # 👥 Asignar usuarios, roles y permisos SQL
         try:
             gestionar_miembros_y_roles(payload, payload.projectName, fecha_actual)
-            debug_print("✅ Miembros y roles gestionados correctamente.")
+            debug_print("Miembros y roles gestionados correctamente.")
         except Exception as e_roles:
             raise HTTPException(status_code=500, detail=f"Error al gestionar miembros y roles: {str(e_roles)}")
 

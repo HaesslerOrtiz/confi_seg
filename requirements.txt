@@ -1,4 +1,4 @@
-#Se reqwuieren instalar las siguientes dependencias
+#Se requieren instalar las siguientes dependencias
 fastapi
 uvicorn
 psycopg2-binary
@@ -6,3 +6,4 @@ python-dotenv
 rasterio
 python-multipart
 shapely
+PyQt5>=5.15,<6
