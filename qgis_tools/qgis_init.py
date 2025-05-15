@@ -11,6 +11,7 @@ def inicializar_qgis():
         return
 
     QGIS_PREFIX_PATH = os.getenv("QGIS_PREFIX_PATH")
+    print("QGIS_PREFIX_PATH:", os.getenv("QGIS_PREFIX_PATH"), file=sys.stderr)
     if not QGIS_PREFIX_PATH:
         raise RuntimeError("QGIS_PREFIX_PATH no está definido en el archivo .env")
 

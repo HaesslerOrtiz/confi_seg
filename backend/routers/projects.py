@@ -362,86 +362,6 @@ def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al crear segmentaciones: {str(e)}")
 
-# Crear proyectos Qgis
-def generar_proyectos_qgis(payload: ProjectExecutionRequest, nombre_db: str, grupo_contenedor: str) -> list:
-    from backend.utils.qgis_init import inicializar_qgis, finalizar_qgis
-    inicializar_qgis()
-    try:
-        from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer
-        resultados = []
-        host = os.getenv("QGIS_SERVER_HOST", "localhost")
-        port = os.getenv("QGIS_SERVER_PORT", "80")
-
-        for mapping_raster in payload.rasterGroupMappings:
-            nombre_raster = os.path.splitext(mapping_raster.imageName)[0].lower()
-            nombre_proyecto = payload.projectName.lower()
-
-            # Ruta para entorno de desarrollo
-            dev_base = os.getenv("QGIS_PROJECTS_DEV_PATH", "C:/proyectos/dev_qgis_projects")
-            carpeta_raster = os.path.join(dev_base, nombre_proyecto, nombre_raster)
-
-            # Ruta para entorno de producción (descomentar cuando se implemente)
-            # carpeta_raster = f"/cgi-bin/Segmentations/{nombre_proyecto}/{nombre_raster}"
-
-            os.makedirs(carpeta_raster, exist_ok=True)
-            ruta_qgz = os.path.join(carpeta_raster, f"{nombre_raster}.qgz")
-
-            # Eliminar proyecto previo si existe
-            if os.path.exists(ruta_qgz):
-                os.remove(ruta_qgz)
-
-            # Crear nuevo proyecto
-            proyecto = QgsProject.instance()
-            proyecto.clear()
-
-            # Capa ráster
-            capa_raster = QgsRasterLayer(
-                f"dbname='{nombre_db}' table=\"{grupo_contenedor}\".\"{nombre_raster}\"", nombre_raster, "postgresraster"
-            )
-            if capa_raster.isValid():
-                proyecto.addMapLayer(capa_raster)
-            else:
-                debug_print(f" Capa ráster inválida: {grupo_contenedor}.{nombre_raster}")
-
-            # Esquemas donde hay segmentaciones de este ráster
-            esquemas_relevantes = set()
-            for grupo in mapping_raster.groups:
-                esquemas_relevantes.add(grupo.groupName)
-                for rel in payload.memberGroupMappings:
-                    if rel.groupId == grupo.groupId:
-                        miembro = next((m for m in payload.members if m.id == rel.memberId and m.role == "Tutor"), None)
-                        if miembro:
-                            esquemas_relevantes.add(miembro.email.split("@")[0].lower())
-
-            # Agregar capas vectoriales (segmentaciones)
-            for esquema in esquemas_relevantes:
-                tabla_segmentacion = f"{esquema}_{nombre_raster}"
-                capa_vector = QgsVectorLayer(
-                    f"dbname='{nombre_db}' table=\"{esquema}\".\"{tabla_segmentacion}\"", tabla_segmentacion, "postgres"
-                )
-                if capa_vector.isValid():
-                    proyecto.addMapLayer(capa_vector)
-                else:
-                    debug_print(f" Capa vectorial inválida: {esquema}_{nombre_raster}")
-
-            # Guardar archivo .qgz
-            proyecto.write(ruta_qgz)
-
-            # Generar URL servantMap (siempre válida en ambos entornos)
-            servant_map = f"https://{host}:{port}/cgi-bin/Segmentations/{nombre_proyecto}/{nombre_raster}/qgis_mapserv.fcgi"
-
-            resultados.append({
-                "imagen": mapping_raster.imageName,
-                "servantMap": servant_map
-            })
-
-            debug_print(f"Proyecto QGIS generado: {ruta_qgz}")
-
-        return resultados
-    
-    finally:
-        finalizar_qgis()
-
 # Crear miembros y roles
 def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str, fecha_actual: str):
     try:
@@ -562,7 +482,7 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
         conn = get_connection(nombre_db)
         cur = conn.cursor()
 
-        debug_print("⚙️ Creando tabla parametros_configuracion si no existe...")
+        debug_print("Creando tabla parametros_configuracion si no existe...")
 
         # 1. Crear la tabla si no existe
         cur.execute(f"""
@@ -631,7 +551,7 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
                 segmenter_groups_str
             ))
 
-            debug_print(f"📝 Registro insertado para servantMap: {servant_map}")
+            debug_print(f"Registro insertado para servantMap: {servant_map}")
 
         conn.commit()
         cur.close()
@@ -780,6 +700,68 @@ def revertir_proyecto_fallido(nombre_db: str):
     except Exception as e:
         debug_print(f" Error en la limpieza de roles de grupo: {e}")
 
+# Ejecución de proyectos QGIS
+def ejecutar_qgis_script(payload: ProjectExecutionRequest, nombre_db: str, grupo_contenedor: str) -> list:
+    import tempfile
+    import json
+    import subprocess
+
+    # 1. Guardar archivo temporal con parámetros
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as tmp_file:
+        json.dump({
+            "payload": payload.model_dump(),
+            "nombre_db": nombre_db,
+            "grupo_contenedor": grupo_contenedor
+        }, tmp_file, ensure_ascii=False, indent=2)
+        ruta_json = tmp_file.name
+
+    # 2. Ruta al script y ejecutable
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "qgis_tools", "generar_proyecto_qgis.py"))
+    debug_print(f"Ruta absoluta al script QGIS: {script_path}")
+    ejecutable_qgis = r"C:\OSGeo4W64\bin\python-qgis.bat"  # ⚠️ Cambia si usas otro path
+    comando = [ejecutable_qgis, script_path, ruta_json]
+
+    # 3. Ejecutar subproceso
+    debug_print(f"📄 Ruta JSON que se pasa al script: {ruta_json}")
+    debug_print(f"🧪 Existe archivo JSON? {os.path.exists(ruta_json)}")
+
+    resultado = subprocess.run(comando, capture_output=True, text=True)
+
+    debug_print(f"🟢 stdout del script:\n{resultado.stdout.strip()}")
+    debug_print(f"🔴 stderr del script:\n{resultado.stderr.strip()}")
+
+    # Si hubo error al ejecutar el script, lanzar excepción
+    if resultado.returncode != 0:
+        os.remove(ruta_json)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al generar proyectos QGIS: {resultado.stderr.strip() or '(sin mensaje)'}"
+        )
+
+    # Validar y retornar salida JSON
+    try:
+        if not resultado.stdout.strip():
+            raise ValueError("El script no devolvió ninguna salida por stdout.")
+
+        # Buscar la línea JSON dentro del stdout (debe comenzar con { o [ )
+        for linea in resultado.stdout.strip().splitlines():
+            linea = linea.strip()
+            if linea.startswith("{") or linea.startswith("["):
+                salida_qgis = json.loads(linea)
+                break
+        else:
+            raise ValueError("No se encontró una línea JSON válida en la salida del script.")
+
+        os.remove(ruta_json)
+        return salida_qgis
+
+    except Exception as e:
+        os.remove(ruta_json)
+        raise HTTPException(
+            status_code=500,
+            detail=f"La salida del script QGIS no es un JSON válido: {str(e)}"
+        )
+
 # Endpoint para creación de elementos en el servidor postgresql
 @router.post("/upload-tiffs")
 async def upload_tiffs(projectName: str = Form(...), files: List[UploadFile] = File(...)):
@@ -891,16 +873,20 @@ async def create_project(payload: ProjectExecutionRequest):
         # Fecha actual para nombrar roles de grupo y servantMaps
         fecha_actual = datetime.today().strftime("%Y%m%d")
 
-        # 🛰️ Generar proyectos QGIS por imagen
+        # Generar proyectos QGIS por imagen
         try:
-            resumen_qgis = generar_proyectos_qgis(payload, payload.projectName, payload.grupoContenedor)
+            resumen_qgis = ejecutar_qgis_script(payload, payload.projectName, payload.grupoContenedor)
             debug_print("Proyectos QGIS generados:")
             for r in resumen_qgis:
                 debug_print(f"- {r['imagen']} → {r['servantMap']}")
         except Exception as e_qgis:
-            raise HTTPException(status_code=500, detail=f"Error al generar los proyectos QGIS: {str(e_qgis)}")
+            debug_print(f"Error técnico QGIS: {e_qgis}")
+            raise HTTPException(
+                status_code=500,
+                detail="Ocurrió un problema al generar los archivos del proyecto QGIS. Intenta nuevamente o contacta al administrador."
+            )
 
-        # 👥 Asignar usuarios, roles y permisos SQL
+        # Asignar usuarios, roles y permisos SQL
         try:
             gestionar_miembros_y_roles(payload, payload.projectName, fecha_actual)
             debug_print("Miembros y roles gestionados correctamente.")
