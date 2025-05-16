@@ -234,8 +234,11 @@ def importar_rasters(nombre_db: str, raster_mappings: List[RasterGroupMapping], 
             try:
                 # Paso 1: Crear SQL con raster2pgsql
                 sql_file = tiff_path.replace(".tif", ".sql").replace(".tiff", ".sql")
+
+                # ➕ CAMBIO APLICADO: mejora del comando raster2pgsql
+                # Se agregó el flag -F y se dejó -t 512x512 por control explícito de tile size
                 raster2pgsql_cmd = [
-                    "raster2pgsql", "-s", raster.srid, "-I", "-C", "-M", "-t", "512x512",
+                    "raster2pgsql", "-s", raster.srid, "-I", "-C", "-M", "-F", "-t", "512x512",
                     tiff_path, f"{grupo_contenedor}.{table_name}"
                 ]
 
@@ -285,6 +288,7 @@ def importar_rasters(nombre_db: str, raster_mappings: List[RasterGroupMapping], 
         )
 
     return resultados
+
 
 # Crea las segmentaciones en cada una de los esquemas
 def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo_contenedor: str):
@@ -722,13 +726,13 @@ def ejecutar_qgis_script(payload: ProjectExecutionRequest, nombre_db: str, grupo
     comando = [ejecutable_qgis, script_path, ruta_json]
 
     # 3. Ejecutar subproceso
-    debug_print(f"📄 Ruta JSON que se pasa al script: {ruta_json}")
-    debug_print(f"🧪 Existe archivo JSON? {os.path.exists(ruta_json)}")
+    debug_print(f"Ruta JSON que se pasa al script: {ruta_json}")
+    debug_print(f"Existe archivo JSON? {os.path.exists(ruta_json)}")
 
     resultado = subprocess.run(comando, capture_output=True, text=True)
 
-    debug_print(f"🟢 stdout del script:\n{resultado.stdout.strip()}")
-    debug_print(f"🔴 stderr del script:\n{resultado.stderr.strip()}")
+    debug_print(f"stdout del script:\n{resultado.stdout.strip()}")
+    debug_print(f"stderr del script:\n{resultado.stderr.strip()}")
 
     # Si hubo error al ejecutar el script, lanzar excepción
     if resultado.returncode != 0:
@@ -885,19 +889,33 @@ async def create_project(payload: ProjectExecutionRequest):
                 status_code=500,
                 detail="Ocurrió un problema al generar los archivos del proyecto QGIS. Intenta nuevamente o contacta al administrador."
             )
-
+        
+        
         # Asignar usuarios, roles y permisos SQL
+        '''
         try:
             gestionar_miembros_y_roles(payload, payload.projectName, fecha_actual)
             debug_print("Miembros y roles gestionados correctamente.")
         except Exception as e_roles:
             raise HTTPException(status_code=500, detail=f"Error al gestionar miembros y roles: {str(e_roles)}")
 
-        # Crear e insertar configuración en la tabla parametros_configuracion
+        # Crear e insertar párametros en la tabla parametros_configuracion
         try:
             crear_configuracion(payload.projectName, payload.grupoContenedor, payload, fecha_actual)
         except Exception as e_config:
             raise HTTPException(status_code=500, detail=f"Error al crear configuración del proyecto: {str(e_config)}")
+        '''
+
+        # ✅ RESPUESTA FINAL TEMPORAL DE ÉXITO
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "msg": f"✅ El proyecto '{payload.projectName}' se ejecutó correctamente hasta la generación de proyectos QGIS.",
+                "resumen_rasters": resumen_rasters,
+                "resumen_qgis": resumen_qgis
+            }
+        )
 
     except HTTPException as he:
         debug_print(f"Error controlado: {he.detail}")

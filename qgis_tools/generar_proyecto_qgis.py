@@ -3,13 +3,23 @@ import sys
 import json
 import os
 
-print("Script iniciado", file=sys.stderr)
+# Cargar variables de entorno desde .env sin usar dotenv
+import importlib.util
 
+# Ruta absoluta al archivo backend/__init__.py
+ruta_backend_init = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend", "__init__.py"))
+spec = importlib.util.spec_from_file_location("backend_init", ruta_backend_init)
+backend_init = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(backend_init)
+
+# Ejecutar función cargar_env_manual
+backend_init.cargar_env_manual()
+
+# Ajustar ruta para importar núcleo de QGIS
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from qgis_tools.qgis_init import inicializar_qgis, finalizar_qgis
 from qgis_tools.qgis_core import generar_proyectos_qgis, dict_to_request
-
 
 def main():
     print("Entrando a main()", file=sys.stderr)

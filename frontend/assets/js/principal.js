@@ -75,31 +75,38 @@ document.addEventListener('DOMContentLoaded', () => {
   
     // Reiniciar estado
     selectedKey = null;
-    originElem  = null;
+    originElem = null;
     originPoint = null;
   }  
   
   // Reconstruye todos los contenedores dinámicos
-  function actualizarTodosContenedores() {
+  function actualizarImagenes() {
     clearAllLines();
     imagenesContainer.innerHTML = '';
-    gruposContainer.innerHTML   = '';
-    miembrosContainer.innerHTML = '';
-    
     const numImg = Math.max(0, parseInt(numImagesParsed.value, 10) || 0);
-    const numGrp = Math.max(0, parseInt(numGroupsParsed.value, 10) || 0);
-    const numMbr = Math.max(0, parseInt(numMembersParsed.value, 10) || 0);
-    
-    for (let i = 0; i < numImg; i++) imagenesContainer.appendChild(crearElemento('imagen', i));
-    
-    for (let i = 0; i < numGrp; i++) {
-      const div = crearElemento('grupo', i);
-      gruposContainer.appendChild(div);
+    for (let i = 0; i < numImg; i++) {
+      imagenesContainer.appendChild(crearElemento('imagen', i));
     }
-    
-    for (let i = 0; i < numMbr; i++) miembrosContainer.appendChild(crearElemento('miembro', i));
   }
-  
+
+  function actualizarGrupos() {
+    clearAllLines();
+    gruposContainer.innerHTML = '';
+    const numGrp = Math.max(0, parseInt(numGroupsParsed.value, 10) || 0);
+    for (let i = 0; i < numGrp; i++) {
+      gruposContainer.appendChild(crearElemento('grupo', i));
+    }
+  }
+
+  function actualizarMiembros() {
+    clearAllLines();
+    miembrosContainer.innerHTML = '';
+    const numMbr = Math.max(0, parseInt(numMembersParsed.value, 10) || 0);
+    for (let i = 0; i < numMbr; i++) {
+      miembrosContainer.appendChild(crearElemento('miembro', i));
+    }
+  }
+
   // Crea un bloque dinámico
   function crearElemento(tipo, idx) {
     const div = document.createElement('div');
@@ -254,7 +261,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (origTipo === 'imagen') {
       const grupoId = toId;
 
-      // 🚫 Validar si el grupo ya tiene otra imagen asociada
+      // Validar si el grupo ya tiene otra imagen asociada
       const yaTieneImagen = Array.from(connections.values()).some(rel => {
         return rel.toId === grupoId && rel.fromId.startsWith('imagen');
       });
@@ -282,25 +289,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const idxOrigen = parseInt(fromId.split('-')[1]);
       const selectOrigen = document.querySelector(`#miembro-${idxOrigen} select`);
       const rolOrigen = selectOrigen?.value;
-
-      // Si el miembro actual es Tutor, validar si ya hay otro Tutor en ese grupo
-      /*if (rolOrigen === 'Tutor') {
-        const yaTieneOtroTutor = Array.from(connections.values()).some(rel => {
-          return rel.toId === grupoId && rel.fromId.startsWith('miembro') && (() => {
-            const idx = parseInt(rel.fromId.split('-')[1]);
-            const select = document.querySelector(`#miembro-${idx} select`);
-            const rol = select?.value;
-            return rol === 'Tutor' && rel.fromId !== fromId;
-          })();
-        });
-
-        if (yaTieneOtroTutor) {
-          alert('⚠️ El grupo ya tiene un miembro con rol de Tutor');
-          originPoint.style.backgroundColor = '#004080';
-          originPoint = originElem = null;
-          return;
-        }
-      }*/
     }
 
     // Evitar duplicados
@@ -357,13 +345,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Inicialización
-  actualizarTodosContenedores();
-  [numImagesParsed, numGroupsParsed, numMembersParsed].forEach(inp => {
-    inp.addEventListener('input',  actualizarTodosContenedores);
-    inp.addEventListener('change', actualizarTodosContenedores);
+  // Eventos para reconstruir contenedores
+  numImagesParsed.addEventListener('input', actualizarImagenes);
+  numImagesParsed.addEventListener('change', actualizarImagenes);
+  numGroupsParsed.addEventListener('input', actualizarGrupos);
+  numGroupsParsed.addEventListener('change', actualizarGrupos);
+  numMembersParsed.addEventListener('input', actualizarMiembros);
+  numMembersParsed.addEventListener('change', actualizarMiembros);
+
+  studentTutorVal.addEventListener('change', () => {
+    clearAllLines();
+    actualizarImagenes();
+    actualizarGrupos();
+    actualizarMiembros();
   });
-  studentTutorVal.addEventListener('change', actualizarTodosContenedores);
 });
 
 //Funcionalidad del botón Confirmar
@@ -427,67 +422,104 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Validar que no falten imágenes por cargar
     const imagenWrappers = document.querySelectorAll("#imagenesContainer input[type=file]");
+    const nombresBase = [];
     let faltanImagenes = false;
 
     imagenWrappers.forEach((input) => {
       const file = input.files[0];
-      if (!file) {
-        faltanImagenes = true;
-      } 
+      faltanImagenes ||= !file;
     });
 
     if (faltanImagenes) {
       errors.push("Faltan imágenes por cargar");
     }
 
-
-    // Validar que no haya imágenes con el mismo nombre (ignorando la extensión)
-    const nombresBase = [];
+    // === Validaciones de nombres, duplicados, relaciones y reglas por rol ===
+    const rolesMiembros = [];
+    const miembrosNombres = new Set();
+    const gruposNombres = new Set();
+    const rasterRelations = [];
+    const memberRelations = [];
     const nombresDuplicados = new Set();
 
+    // Validar miembros
+    miembrosInputs.forEach((input, i) => {
+      const nombre = input.value.trim();
+      const rol = document.querySelector(`#miembro-${i} select`)?.value || '';
+      if (!nombre) {
+        rolesMiembros.push(rol);
+        return;
+      }
+      if (miembrosNombres.has(nombre)) {
+        errors.push(`Nombre de miembro duplicado: "${nombre}"`);
+      }
+      miembrosNombres.add(nombre);
+      rolesMiembros.push(rol);
+    });
+
+    // Validar grupos
+    gruposInputs.forEach((input, i) => {
+      const nombre = input.value.trim();
+      if (!nombre) return;
+      if (gruposNombres.has(nombre)) {
+        errors.push(`Nombre de grupo duplicado: "${nombre}"`);
+      }
+      gruposNombres.add(nombre);
+    });
+
+    // Validar TIFF duplicados
     imagenWrappers.forEach((input) => {
       const file = input.files[0];
       if (file) {
-        const nombreBase = file.name.split('.').slice(0, -1).join('.'); // elimina la extensión
+        const nombreBase = file.name.split('.').slice(0, -1).join('.');
         if (nombresBase.includes(nombreBase)) {
           nombresDuplicados.add(nombreBase);
         }
         nombresBase.push(nombreBase);
       }
     });
-
     if (nombresDuplicados.size > 0) {
       const duplicados = Array.from(nombresDuplicados).join(", ");
       errors.push(`Se han cargado varias imágenes con el mismo nombre: ${duplicados}`);
     }
 
-    // Mostrar errores si los hay
-    if (errors.length > 0) {
-      alert("⚠️ Errores detectados:\n" + errors.join("\n"));
-      return;
-    }
-
     // Recolección de relaciones
-    const rasterRelations = [];
-    const memberRelations = [];
-
-    if (!(window.connections instanceof Map) || window.connections.size === 0) {
-      alert("No se han definido relaciones aún.");
-      return;
-    }
-
-    for (const [key, { fromId, toId }] of window.connections.entries()) {
-
+    for (const [connkey, { fromId, toId }] of window.connections.entries()) {
       if (fromId.startsWith("imagen") && toId.startsWith("grupo")) {
         rasterRelations.push({ source: fromId, target: toId });
       }
-
       if (fromId.startsWith("miembro") && toId.startsWith("grupo")) {
         memberRelations.push({ source: fromId, target: toId });
       }
     }
 
-    // Validar que cada imagen esté relacionada al menos a un grupo
+    // Validación por tipo de usuario
+    if (studentTutor === "no") {
+      if (!rolesMiembros.includes("Líder")) {
+        errors.push("Debe haber al menos un miembro con rol de Líder");
+      }
+    }
+
+    if (studentTutor === "si") {
+      if (!rolesMiembros.includes("Tutor")) {
+        errors.push("Debe haber al menos un miembro con rol de Tutor");
+      }
+      for (let i = 0; i < numGroups; i++) {
+        const idGrupo = `grupo-${i}`;
+        const tieneTutor = memberRelations.some(rel => {
+          if (rel.target !== idGrupo) return false;
+          const idxMiembro = parseInt(rel.source.split("-")[1]);
+          const rol = document.querySelector(`#miembro-${idxMiembro} select`)?.value;
+          return rol === "Tutor";
+        });
+        if (!tieneTutor) {
+          const nombreGrupo = document.querySelector(`#${idGrupo} input`)?.value || `(Grupo ${i + 1})`;
+          errors.push(`El grupo "${nombreGrupo}" no tiene ningún Tutor asignado`);
+        }
+      }
+    }
+
+    // Imágenes sin grupo
     const imagenNoRelacionada = [];
     for (let i = 0; i < numImages; i++) {
       const id = `imagen-${i}`;
@@ -497,29 +529,34 @@ document.addEventListener('DOMContentLoaded', () => {
         imagenNoRelacionada.push(nombreArchivo);
       }
     }
+    if (imagenNoRelacionada.length > 0) {
+      errors.push("Las siguientes imágenes no están relacionadas con ningún grupo: " + imagenNoRelacionada.join(", "));
+    }
 
-    // Validar que cada grupo tenga al menos una imagen relacionada
+    // Grupos sin imagen o con más de una imagen
     const gruposSinImagen = [];
+    const gruposConVariasImagenes = new Map();
     for (let i = 0; i < numGroups; i++) {
       const idGrupo = `grupo-${i}`;
-      const tieneRelacion = rasterRelations.some(rel => rel.target === idGrupo);
-      if (!tieneRelacion) {
+      const imagenesRelacionadas = rasterRelations.filter(rel => rel.target === idGrupo);
+      if (imagenesRelacionadas.length === 0) {
         const nombreGrupo = document.querySelector(`#${idGrupo} input`)?.value?.trim() || idGrupo;
         gruposSinImagen.push(nombreGrupo);
+      } else if (imagenesRelacionadas.length > 1) {
+        const nombreGrupo = document.querySelector(`#${idGrupo} input`)?.value?.trim() || idGrupo;
+        gruposConVariasImagenes.set(nombreGrupo, imagenesRelacionadas.length);
+      }
+    }
+    if (gruposSinImagen.length > 0) {
+      errors.push("Los siguientes grupos no tienen imágenes relacionadas: " + gruposSinImagen.join(", "));
+    }
+    if (gruposConVariasImagenes.size > 0) {
+      for (const [grupo, cantidad] of gruposConVariasImagenes.entries()) {
+        errors.push(`El grupo "${grupo}" tiene ${cantidad} imágenes relacionadas. Solo se permite una.`);
       }
     }
 
-    if (gruposSinImagen.length > 0) {
-      alert("⚠️ Los siguientes grupos no tienen imágenes relacionadas:\n\n" + gruposSinImagen.join("\n"));
-      return;
-    }
-
-    if (imagenNoRelacionada.length > 0) {
-      alert("⚠️ Las siguientes imágenes no están relacionadas con ningún grupo:\n\n" + imagenNoRelacionada.join("\n"));
-      return;
-    }
-
-    // Validar que cada grupo tenga al menos un miembro relacionado
+    // Grupos sin miembro
     const gruposSinMiembro = [];
     for (let i = 0; i < numGroups; i++) {
       const idGrupo = `grupo-${i}`;
@@ -529,37 +566,30 @@ document.addEventListener('DOMContentLoaded', () => {
         gruposSinMiembro.push(nombreGrupo);
       }
     }
-
     if (gruposSinMiembro.length > 0) {
-      alert("⚠️ Los siguientes grupos no tienen miembros relacionados:\n\n" + gruposSinMiembro.join("\n"));
-      return;
+      errors.push("Los siguientes grupos no tienen miembros relacionados: " + gruposSinMiembro.join(", "));
     }
 
-    // Validar que cada miembro esté relacionado a al menos un grupo (excepto Tutor o Líder)
+    // Miembros sin grupo (excepto Tutor o Líder)
     const miembrosSinGrupo = [];
     for (let i = 0; i < numMembers; i++) {
       const idMiembro = `miembro-${i}`;
       const select = document.querySelector(`#${idMiembro} select`);
       const rol = select?.value || '';
-      
       if (rol === 'Tutor' || rol === 'Líder') continue;
-
       const tieneRelacion = memberRelations.some(rel => rel.source === idMiembro);
       if (!tieneRelacion) {
         const nombre = document.querySelector(`#${idMiembro} input`)?.value || `(Miembro ${i + 1})`;
         miembrosSinGrupo.push(nombre);
       }
     }
-
     if (miembrosSinGrupo.length > 0) {
-      alert("⚠️ Los siguientes miembros no están relacionados con ningún grupo:\n\n" + miembrosSinGrupo.join("\n"));
-      return;
+      errors.push("Los siguientes miembros no están relacionados con ningún grupo: " + miembrosSinGrupo.join(", "));
     }
 
     try {
       // Definir miembrosList y rasterGroupMappings primero
       const miembrosList = [];
-      const miembrosInputs = document.querySelectorAll("#miembrosContainer input[type=text]");
       miembrosInputs.forEach((input, i) => {
           const username = input.value.trim();
           const role = document.querySelector(`#miembro-${i} select`)?.value || '';
@@ -573,13 +603,11 @@ document.addEventListener('DOMContentLoaded', () => {
           });
       });
 
-      const gruposInputs = document.querySelectorAll("#gruposContainer input[type=text]");
       const gruposMap = new Map();
       gruposInputs.forEach((input, i) => {
         gruposMap.set(`grupo-${i}`, input.value.trim());
       });
 
-      const imagenWrappers = document.querySelectorAll("#imagenesContainer input[type=file]");
       const imagenMap = new Map();
       imagenWrappers.forEach((input, i) => {
         const file = input.files[0];
@@ -617,18 +645,20 @@ document.addEventListener('DOMContentLoaded', () => {
       }));
 
       // Detectar miembro con checkbox marcado (Tutor o Líder)
-      const checkSeleccionado = Array.from(document.querySelectorAll('.miembro-check')).find(cb => cb.checked);
+      let grupoContenedorNombre = null;
+      const checkSeleccionado = document.querySelector('.miembro-check:checked');
+
       if (!checkSeleccionado) {
-        alert("⚠️ Debe seleccionar un miembro Tutor/Líder como esquema contenedor de imágenes.");
-        return;
+        errors.push("Debe seleccionar un miembro Tutor/Líder como contenedor del esquema.");
+      } else {
+        const miembroContenedor = checkSeleccionado.closest('.dynamic-item');
+        const input = miembroContenedor.querySelector('input[type=\"text\"]');
+        grupoContenedorNombre = input?.value?.trim();
       }
 
-      const miembroContenedor = checkSeleccionado.closest('.dynamic-item');
-      const input = miembroContenedor.querySelector('input[type="text"]');
-      const grupoContenedorNombre = input?.value?.trim();
-
-      if (!grupoContenedorNombre || !/^[a-z0-9]+$/.test(grupoContenedorNombre)) {
-        alert("⚠️ El nombre del miembro seleccionado no es válido para esquema contenedor");
+      // VALIDACIÓN FINAL: si hay errores, detener flujo
+      if (errors.length > 0) {
+        alert("⚠️ Errores detectados:\n" + errors.join("\n"));
         return;
       }
 
@@ -661,8 +691,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Validar que haya archivos en el formData
       if ([...formData.entries()].length === 0) {
-        alert("⚠️ No se encontraron archivos TIFF para subir.");
-        return;
+        errors.push("No se encontraron archivos TIFF para subir.");
       }
 
       try {
@@ -734,7 +763,7 @@ if (!createResponse.ok || !createResult.success) {
     // ✅ Éxito
     let resumen = "✅ Proyecto creado exitosamente.\n";
     if (Array.isArray(createResult.resumen_rasters)) {
-      resumen += "\n🗂 Resultado por imagen:\n";
+      resumen += "\n Resultado por imagen:\n";
       for (const r of createResult.resumen_rasters) {
         if (r.status === "éxito") {
           resumen += `• ${r.imagen}: ✅ (${r.duracion_segundos} seg)\n`;
@@ -758,25 +787,6 @@ if (!createResponse.ok || !createResult.success) {
   }
   });
 });
-
-
-//Restablecer relaciones y checkboxes
-function resetearRelacionesYCheckboxes() {
-  // Eliminar todas las líneas visuales
-  connections.forEach(({ linea }) => {
-    linea.remove();
-  });
-
-  // Vaciar conexiones
-  connections.clear();
-  selectedKey = null;
-
-  // Quitar el estado de "checked" y ocultar el checkbox, pero **no eliminarlo**
-  document.querySelectorAll('.miembro-check').forEach(cb => {
-    cb.checked = false;
-    cb.style.display = 'none';
-  });
-}
 
 //Obtener fecha actual
 function obtenerFechaActualYYYYMMDD() {

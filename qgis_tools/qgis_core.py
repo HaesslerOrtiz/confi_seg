@@ -1,5 +1,6 @@
 # qgis_tools/qgis_core.py
 import os
+import sys
 import uuid
 from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer
 
@@ -66,6 +67,15 @@ def dict_to_request(d):
 # Lógica de generación QGIS
 def generar_proyectos_qgis(payload, nombre_db, grupo_contenedor):
     resultados = []
+    db_user = os.getenv("DB_USER")
+    db_pass = os.getenv("DB_PASSWORD")
+    db_host = os.getenv("DB_HOST", "localhost")
+    db_port = os.getenv("DB_PORT", "5432")
+
+    conn_info = (
+        f"host={db_host} port={db_port} dbname='{nombre_db}' user={db_user} password={db_pass}"
+    )
+    
     host = os.getenv("QGIS_SERVER_HOST", "localhost")
     port = os.getenv("QGIS_SERVER_PORT", "80")
 
@@ -84,11 +94,18 @@ def generar_proyectos_qgis(payload, nombre_db, grupo_contenedor):
         proyecto = QgsProject.instance()
         proyecto.clear()
 
-        capa_raster = QgsRasterLayer(
-            f"dbname='{nombre_db}' table=\"{grupo_contenedor}\".\"{nombre_raster}\"", nombre_raster, "postgresraster"
+        raster_uri = (
+            f"dbname='{nombre_db}' host={db_host} port={db_port} user={db_user} password={db_pass} "
+            f"table=\"{grupo_contenedor}\".\"{nombre_raster}\" (rast)"
         )
+        capa_raster = QgsRasterLayer(raster_uri, nombre_raster, "postgresraster")
+
         if capa_raster.isValid():
             proyecto.addMapLayer(capa_raster)
+        
+        else:
+            print(f"❌ Capa ráster NO válida: {nombre_raster}", file=sys.stderr)
+            print(f"→ URI usada: {raster_uri}", file=sys.stderr)
 
         esquemas_relevantes = set()
         for grupo in mapping_raster.groups:
@@ -101,9 +118,12 @@ def generar_proyectos_qgis(payload, nombre_db, grupo_contenedor):
 
         for esquema in esquemas_relevantes:
             tabla_segmentacion = f"{esquema}_{nombre_raster}"
-            capa_vector = QgsVectorLayer(
-                f"dbname='{nombre_db}' table=\"{esquema}\".\"{tabla_segmentacion}\"", tabla_segmentacion, "postgres"
+            vector_uri = (
+                f"{conn_info} sslmode=disable key='id' type=Polygon "
+                f"table=\"{esquema}\".\"{tabla_segmentacion}\" (geom)"
             )
+            capa_vector = QgsVectorLayer(vector_uri, tabla_segmentacion, "postgres")
+
             if capa_vector.isValid():
                 proyecto.addMapLayer(capa_vector)
 
