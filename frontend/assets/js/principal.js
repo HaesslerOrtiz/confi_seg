@@ -5,14 +5,52 @@ if (!localStorage.getItem('auth')) {
   window.location.href = 'login.html';
 }
 
-//Seleccionar línea
-function getLeaderLineSvg(linea) {
-  const allLines = document.querySelectorAll('svg.leader-line');
-  return Array.from(allLines).find(svg => {
-    return svg.__leaderLine === linea;
-  });
-}
+// Función para activar selección de línea mediante una capa invisible sobre su punto medio
+function activarSeleccionDeLinea(linea, key, originElem, destinoElem) {
+  setTimeout(() => {
+    const overlay = document.createElement('div');
+    overlay.style.position = 'absolute';
+    overlay.style.background = 'transparent';
+    overlay.style.cursor = 'pointer';
+    overlay.style.zIndex = 9999;
+    overlay.style.height = '6px'; // grosor clickeable
 
+    // Coordenadas absolutas de los elementos conectados
+    const rectA = originElem.getBoundingClientRect();
+    const rectB = destinoElem.getBoundingClientRect();
+
+    const x1 = rectA.right + window.scrollX;
+    const y1 = rectA.top + rectA.height / 2 + window.scrollY;
+
+    const x2 = rectB.left + window.scrollX;
+    const y2 = rectB.top + rectB.height / 2 + window.scrollY;
+
+    const deltaX = x2 - x1;
+    const deltaY = y2 - y1;
+    const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    const angle = Math.atan2(deltaY, deltaX) * 180 / Math.PI;
+
+    overlay.style.width = `${length}px`;
+    overlay.style.left = `${x1}px`;
+    overlay.style.top = `${y1 - 6}px`; // centrar en la línea
+    overlay.style.transform = `rotate(${angle}deg)`;
+    overlay.style.transformOrigin = 'left center';
+
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (window.selectedKey) {
+        const anterior = connections.get(window.selectedKey);
+        if (anterior) anterior.linea.setOptions({ color: '#004080' });
+      }
+      window.selectedKey = key;
+      linea.setOptions({ color: '#FF4444' });
+    });
+
+    linea._clickOverlay = overlay;
+  }, 50);
+}
 
 //Funcionalidad boton Salir
 document.addEventListener('DOMContentLoaded', () => {
@@ -40,15 +78,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // Estado
   let originElem = null;
   let originPoint = null;
-  let selectedKey = null;
-  window.connections = new Map(); // "fromId|toId" → { linea, fromId, toId }
+  window.selectedKey = null;
+  window.connections = new Map();
+
   //Eliminar relación/línea
   document.addEventListener('keydown', e => {
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedKey) {
-      const { linea } = connections.get(selectedKey);
+    if ((e.key === 'Delete' || e.key === 'Backspace') && window.selectedKey) {
+      const { linea } = connections.get(window.selectedKey);
+      if (linea._clickOverlay) {
+        linea._clickOverlay.remove();
+      }
       linea.remove();
-      connections.delete(selectedKey);
-      selectedKey = null;
+      connections.delete(window.selectedKey);
+      window.selectedKey = null;
     }
   });
 
@@ -74,7 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   
     // Reiniciar estado
-    selectedKey = null;
+    window.selectedKey = null;
     originElem = null;
     originPoint = null;
   }  
@@ -306,27 +348,16 @@ document.addEventListener('DOMContentLoaded', () => {
       { 
           color: '#004080', 
           size: 3, 
-          path: 'fluid',
+          path: 'straight',
           startPlug: 'disc', 
           endPlug: 'arrow3', 
           zIndex: 1000 
       }
     );
 
+
     // Detectar el nodo SVG real
-    const svgElem = getLeaderLineSvg(linea);
-    if (svgElem) {
-        svgElem.style.pointerEvents = 'all';
-        svgElem.style.cursor = 'pointer';
-        svgElem.addEventListener('click', ev => {
-            ev.stopPropagation();
-            if (selectedKey) {
-                connections.get(selectedKey).linea.setOptions({ color: '#004080' });
-            }
-            selectedKey = key;
-            linea.setOptions({ color: '#FF4444' });
-        });
-    }
+    activarSeleccionDeLinea(linea, key, originElem, elem);
 
     connections.set(key, { fromId, toId, linea });
     originPoint.style.backgroundColor = '#004080';
@@ -335,10 +366,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Deselecciona al hacer clic fuera
   document.addEventListener('click', e => {
-    if (selectedKey && !e.target.closest('.dynamic-item')) {
-      connections.get(selectedKey).linea.setOptions({ color: '#004080' });
-      selectedKey = null;
+    if (window.selectedKey && !e.target.closest('.dynamic-item')) {
+      connections.get(window.selectedKey).linea.setOptions({ color: '#004080' });
+      window.selectedKey = null;
     }
+
     if (originPoint && !e.target.closest('.connection-point')) {
       originPoint.style.backgroundColor = '#004080';
       originPoint = originElem = null;
@@ -760,7 +792,7 @@ if (!createResponse.ok || !createResult.success) {
   return;
 }
 
-    // ✅ Éxito
+    // Éxito
     let resumen = "✅ Proyecto creado exitosamente.\n";
     if (Array.isArray(createResult.resumen_rasters)) {
       resumen += "\n Resultado por imagen:\n";

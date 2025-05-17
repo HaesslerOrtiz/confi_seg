@@ -235,7 +235,7 @@ def importar_rasters(nombre_db: str, raster_mappings: List[RasterGroupMapping], 
                 # Paso 1: Crear SQL con raster2pgsql
                 sql_file = tiff_path.replace(".tif", ".sql").replace(".tiff", ".sql")
 
-                # ➕ CAMBIO APLICADO: mejora del comando raster2pgsql
+                # CAMBIO APLICADO: mejora del comando raster2pgsql
                 # Se agregó el flag -F y se dejó -t 512x512 por control explícito de tile size
                 raster2pgsql_cmd = [
                     "raster2pgsql", "-s", raster.srid, "-I", "-C", "-M", "-F", "-t", "512x512",
@@ -269,7 +269,7 @@ def importar_rasters(nombre_db: str, raster_mappings: List[RasterGroupMapping], 
 
             except Exception as e_img:
                 duracion = time.perf_counter() - inicio
-                debug_print(f"🛰️ Ráster importado como: {grupo_contenedor}.{table_name}")
+                debug_print(f" Ráster importado como: {grupo_contenedor}.{table_name}")
                 resultados.append({
                     "imagen": image_name,
                     "status": "error",
@@ -288,7 +288,6 @@ def importar_rasters(nombre_db: str, raster_mappings: List[RasterGroupMapping], 
         )
 
     return resultados
-
 
 # Crea las segmentaciones en cada una de los esquemas
 def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo_contenedor: str):
@@ -386,7 +385,7 @@ def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str,
                 END $$;
             """, (usuario, usuario))
 
-            # 🔒 Conceder permiso de lectura sobre pg_roles (seguro)
+            # Conceder permiso de lectura sobre pg_roles (seguro)
             cur.execute(f'GRANT SELECT ON pg_roles TO "{usuario}";')
 
         # Asignar roles de grupo (solo a estudiantes y contribuyentes que estén relacionados)
@@ -722,7 +721,7 @@ def ejecutar_qgis_script(payload: ProjectExecutionRequest, nombre_db: str, grupo
     # 2. Ruta al script y ejecutable
     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "qgis_tools", "generar_proyecto_qgis.py"))
     debug_print(f"Ruta absoluta al script QGIS: {script_path}")
-    ejecutable_qgis = r"C:\OSGeo4W64\bin\python-qgis.bat"  # ⚠️ Cambia si usas otro path
+    ejecutable_qgis = r"C:\OSGeo4W64\bin\python-qgis.bat" # Tomar de variable de ambiente
     comando = [ejecutable_qgis, script_path, ruta_json]
 
     # 3. Ejecutar subproceso
