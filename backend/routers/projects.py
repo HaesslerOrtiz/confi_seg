@@ -81,12 +81,10 @@ def get_raster_srid(tiff_path: str) -> str:
                     srid = str(crs.to_epsg())
                     debug_print(f"SRID detectado para {tiff_path}: {srid}")
                     return srid
-                elif crs.is_projected:
-                    debug_print(f"SRID no identificado, pero es proyectado: {tiff_path}. Asignando 3116")
-                    return "3116"
+                # Usar 4326 por defecto si no se detecta ningún SRID
                 elif crs.is_geographic:
-                    debug_print(f"SRID no identificado, pero es geográfico: {tiff_path}. Asignando 4686")
-                    return "4686"
+                    debug_print(f"SRID no identificado, pero es geográfico: {tiff_path}. Asignando 4326")
+                    return "4326"
         raise HTTPException(status_code=400, detail=f"No se pudo determinar el SRID del archivo TIFF '{os.path.basename(tiff_path)}'")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al leer el archivo TIFF '{os.path.basename(tiff_path)}': {str(e)}")
@@ -328,25 +326,55 @@ def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo
             num_field = f"id_ciaf_{nivel}n"
 
             # Para cada grupo relacionado al ráster
+            # 1. Crear segmentaciones en esquemas de grupos
             for grupo in mapping_raster.groups:
-                esquemas_destino = {grupo.groupName}
-                esquemas_destino.update(tutores_por_grupo.get(grupo.groupId, set()))
+                esquema_grupo = grupo.groupName.lower()
+                nombre_tabla = f"{esquema_grupo}_{raster_base}"
 
-                for esquema in esquemas_destino:
-                    esquema = esquema.lower()
-                    nombre_tabla = f"{esquema}_{raster_base}"
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {esquema_grupo}.{nombre_tabla} (
+                        id UUID PRIMARY KEY,
+                        {ciaf_field} TEXT,
+                        {num_field} INTEGER,
+                        geom geometry(Polygon, {srid})
+                    );
+                """)
+                cur.execute(f"""
+                    INSERT INTO {esquema_grupo}.{nombre_tabla} (id, {ciaf_field}, {num_field}, geom)
+                    VALUES (%s, %s, %s, ST_GeomFromText(%s, %s));
+                """, (
+                    str(uuid.uuid4()),
+                    f"clase_{nivel}",
+                    nivel * 100,
+                    geom_wkt,
+                    srid
+                ))
 
+                debug_print(f"Segmentación creada: {nombre_tabla}")
+
+            # 2. Mapear imagen - tutores únicos relacionados por cualquier grupo
+            imagenes_por_tutor = dict()
+            for grupo in mapping_raster.groups:
+                tutores = tutores_por_grupo.get(grupo.groupId, set())
+                for tutor in tutores:
+                    if tutor not in imagenes_por_tutor:
+                        imagenes_por_tutor[tutor] = set()
+                    imagenes_por_tutor[tutor].add(raster_base)
+
+            # 3. Crear una sola segmentación por tutor por imagen
+            for tutor, imagenes in imagenes_por_tutor.items():
+                for raster_tutor in imagenes:
+                    nombre_tabla_tutor = f"{tutor}_{raster_tutor}"
                     cur.execute(f"""
-                        CREATE TABLE IF NOT EXISTS {esquema}.{nombre_tabla} (
+                        CREATE TABLE IF NOT EXISTS {tutor}.{nombre_tabla_tutor} (
                             id UUID PRIMARY KEY,
                             {ciaf_field} TEXT,
                             {num_field} INTEGER,
                             geom geometry(Polygon, {srid})
                         );
                     """)
-
                     cur.execute(f"""
-                        INSERT INTO {esquema}.{nombre_tabla} (id, {ciaf_field}, {num_field}, geom)
+                        INSERT INTO {tutor}.{nombre_tabla_tutor} (id, {ciaf_field}, {num_field}, geom)
                         VALUES (%s, %s, %s, ST_GeomFromText(%s, %s));
                     """, (
                         str(uuid.uuid4()),
@@ -356,7 +384,10 @@ def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo
                         srid
                     ))
 
-                    debug_print(f"Segmentación creada: {esquema}_{raster_base}")
+                    debug_print(f"Segmentación creada en tutor {tutor}: {nombre_tabla_tutor}")
+            # -------------------- BLOQUE NUEVO TERMINA AQUÍ --------------------
+
+
 
         conn.commit()
         cur.close()

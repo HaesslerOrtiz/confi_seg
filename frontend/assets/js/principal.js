@@ -6,44 +6,60 @@ if (!localStorage.getItem('auth')) {
 }
 
 // Función para activar selección de línea mediante una capa invisible sobre su punto medio
-function activarSeleccionDeLinea(linea, key, originElem, destinoElem) {
+function activarSeleccionDeLinea(linea, key, originElem, destinoElem, originPoint, pt) {
   setTimeout(() => {
     const overlay = document.createElement('div');
     overlay.style.position = 'absolute';
-    overlay.style.background = 'transparent';
+    overlay.style.background = 'transparent'; // color visible temporal para debug
     overlay.style.cursor = 'pointer';
     overlay.style.zIndex = 9999;
-    overlay.style.height = '6px'; // grosor clickeable
+    overlay.style.height = '4px'; // más delgado para evitar molestias
 
-    // Coordenadas absolutas de los elementos conectados
-    const rectA = originElem.getBoundingClientRect();
-    const rectB = destinoElem.getBoundingClientRect();
+    // Obtener coordenadas del punto de origen (originPoint)
+    const puntoA = originPoint.getBoundingClientRect();
+    const x1 = puntoA.left + puntoA.width / 2 + window.scrollX;
+    const y1 = puntoA.top + puntoA.height / 2 + window.scrollY;
 
-    const x1 = rectA.right + window.scrollX;
-    const y1 = rectA.top + rectA.height / 2 + window.scrollY;
-
-    const x2 = rectB.left + window.scrollX;
-    const y2 = rectB.top + rectB.height / 2 + window.scrollY;
-
+    // Obtener coordenadas del punto de destino (pt)
+    const puntoB = pt.getBoundingClientRect();
+    const x2 = puntoB.left + puntoB.width / 2 + window.scrollX;
+    const y2 = puntoB.top + puntoB.height / 2 + window.scrollY;
+    
     const deltaX = x2 - x1;
     const deltaY = y2 - y1;
     const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-    const angle = Math.atan2(deltaY, deltaX) * 180 / Math.PI;
+    
+    // Acortar 10px en total (5px en cada extremo)
+    const factorReduccion = 10;
+    const factorX = (deltaX / length) * (factorReduccion / 2);
+    const factorY = (deltaY / length) * (factorReduccion / 2);
 
-    overlay.style.width = `${length}px`;
-    overlay.style.left = `${x1}px`;
-    overlay.style.top = `${y1 - 6}px`; // centrar en la línea
-    overlay.style.transform = `rotate(${angle}deg)`;
+    const x1_acortado = x1 + factorX;
+    const y1_acortado = y1 + factorY;
+    const length_acortado = length - factorReduccion;
+    const angle = Math.atan2(deltaY, deltaX) * 180 / Math.PI;
+    overlay.style.width = `${length_acortado}px`;
+    overlay.style.left = `${x1_acortado}px`;
+    overlay.style.top = `${y1_acortado}px`;
+    console.log(`Overlay generado: ancho=${length}, x1=${x1}, y1=${y1}`);
+    overlay.style.transform = `translateY(-50%) rotate(${angle}deg)`;
     overlay.style.transformOrigin = 'left center';
 
     document.body.appendChild(overlay);
 
     overlay.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      if (window.selectedKey) {
-        const anterior = connections.get(window.selectedKey);
-        if (anterior) anterior.linea.setOptions({ color: '#004080' });
+
+      // Deseleccionar puntos de conexión si los hay
+      document.querySelectorAll('.connection-point.seleccionado').forEach(p => p.classList.remove('seleccionado'));
+
+      // Deseleccionar línea anterior
+      if (window.selectedKey && window.connections.has(window.selectedKey)) {
+        const anterior = window.connections.get(window.selectedKey);
+        if (anterior?.linea) anterior.linea.setOptions({ color: '#004080' });
       }
+
+      // Seleccionar esta
       window.selectedKey = key;
       linea.setOptions({ color: '#FF4444' });
     });
@@ -83,26 +99,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
   //Eliminar relación/línea
   document.addEventListener('keydown', e => {
-    if ((e.key === 'Delete' || e.key === 'Backspace') && window.selectedKey) {
-      const { linea } = connections.get(window.selectedKey);
-      if (linea._clickOverlay) {
-        linea._clickOverlay.remove();
+    if ((e.key === 'Delete' || e.key === 'Backspace') && window.selectedKey && connections.has(window.selectedKey)) {
+      const conn = connections.get(window.selectedKey);
+      if (conn?.linea) {
+        if (conn.linea._clickOverlay) conn.linea._clickOverlay.remove();
+        conn.linea.remove();
       }
-      linea.remove();
       connections.delete(window.selectedKey);
       window.selectedKey = null;
     }
+
   });
 
   // Elimina todas las líneas existentes|
   function clearAllLines() {
     connections.forEach(({ linea }) => {
       try {
+        if (linea._clickOverlay) {
+          linea._clickOverlay.remove();
+        }
         linea.remove();
       } catch (e) {
         console.warn("No se pudo eliminar línea LeaderLine:", e);
       }
     });
+
     connections.clear();
   
     // Elimina todos los SVGs residuales insertados por LeaderLine
@@ -286,11 +307,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const elem = pt.closest('.dynamic-item');
     const tipo = elem.dataset.type;
 
+    // Si hay una línea seleccionada, deseleccionarla
+    if (window.selectedKey && window.connections.has(window.selectedKey)) {
+      const anterior = window.connections.get(window.selectedKey);
+      if (anterior?.linea) anterior.linea.setOptions({ color: '#004080' });
+      window.selectedKey = null;
+    }
+
     // Si no hay origen, lo asigna
     if (!originPoint) {
       originElem  = elem;
       originPoint = pt;
       pt.style.backgroundColor = '#FF4444';
+      pt.classList.add('seleccionado');
       return;
     }
 
@@ -319,6 +348,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Solo imagen→grupo o miembro→grupo
     if (!((origTipo === 'imagen' || origTipo === 'miembro') && tipo === 'grupo')) {
       originPoint.style.backgroundColor = '#004080';
+      originPoint.classList.remove('seleccionado');
       originPoint = originElem = null;
       return;
     }
@@ -335,29 +365,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Evitar duplicados
     if (connections.has(key)) {
-      alert('⚠️ Estos elementos ya están conectados');
+      mostrarError("Estos elementos ya están conectados.");
       originPoint.style.backgroundColor = '#004080';
       originPoint = originElem = null;
       return;
     }
 
     // Dibuja la línea
-    const linea = new LeaderLine(
-      LeaderLine.pointAnchor(originPoint, { x: '100%', y: '50%' }),
-      LeaderLine.pointAnchor(pt, { x: '0%', y: '50%' }),
-      { 
-          color: '#004080', 
-          size: 3, 
-          path: 'straight',
-          startPlug: 'disc', 
-          endPlug: 'arrow3', 
-          zIndex: 1000 
-      }
-    );
+    const fromAnchor = originPoint.classList.contains('left')
+      ? LeaderLine.pointAnchor(originPoint, { x: '0%', y: '50%' })
+      : LeaderLine.pointAnchor(originPoint, { x: '100%', y: '50%' });
 
+    const toAnchor = pt.classList.contains('left')
+      ? LeaderLine.pointAnchor(pt, { x: '0%', y: '50%' })
+      : LeaderLine.pointAnchor(pt, { x: '100%', y: '50%' });
+
+    const linea = new LeaderLine(fromAnchor, toAnchor, {
+      color: '#004080',
+      size: 3,
+      path: 'straight',
+      startPlug: 'disc',
+      endPlug: 'arrow3',
+      zIndex: 1000
+    });
 
     // Detectar el nodo SVG real
-    activarSeleccionDeLinea(linea, key, originElem, elem);
+    activarSeleccionDeLinea(linea, key, originElem, elem, originPoint, pt);
 
     connections.set(key, { fromId, toId, linea });
     originPoint.style.backgroundColor = '#004080';
@@ -366,8 +399,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Deselecciona al hacer clic fuera
   document.addEventListener('click', e => {
-    if (window.selectedKey && !e.target.closest('.dynamic-item')) {
-      connections.get(window.selectedKey).linea.setOptions({ color: '#004080' });
+    if (window.selectedKey && !e.target.closest('.dynamic-item') && connections.has(window.selectedKey)) {
+      const conn = connections.get(window.selectedKey);
+      if (conn?.linea) conn.linea.setOptions({ color: '#004080' });
       window.selectedKey = null;
     }
 
@@ -549,6 +583,21 @@ document.addEventListener('DOMContentLoaded', () => {
           errors.push(`El grupo "${nombreGrupo}" no tiene ningún Tutor asignado`);
         }
       }
+
+      // Validar que cada grupo tenga al menos un Estudiante
+      for (let i = 0; i < numGroups; i++) {
+        const idGrupo = `grupo-${i}`;
+        const tieneEstudiante = memberRelations.some(rel => {
+          if (rel.target !== idGrupo) return false;
+          const idxMiembro = parseInt(rel.source.split("-")[1]);
+          const rol = document.querySelector(`#miembro-${idxMiembro} select`)?.value;
+          return rol === "Estudiante";
+        });
+        if (!tieneEstudiante) {
+          const nombreGrupo = document.querySelector(`#${idGrupo} input`)?.value || `(Grupo ${i + 1})`;
+          errors.push(`El grupo "${nombreGrupo}" no tiene ningún Estudiante asignado`);
+        }
+      }
     }
 
     // Imágenes sin grupo
@@ -574,9 +623,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (imagenesRelacionadas.length === 0) {
         const nombreGrupo = document.querySelector(`#${idGrupo} input`)?.value?.trim() || idGrupo;
         gruposSinImagen.push(nombreGrupo);
-      } else if (imagenesRelacionadas.length > 1) {
-        const nombreGrupo = document.querySelector(`#${idGrupo} input`)?.value?.trim() || idGrupo;
-        gruposConVariasImagenes.set(nombreGrupo, imagenesRelacionadas.length);
+      } 
+      else if (imagenesRelacionadas.length > 1) {
+          const nombreGrupo = document.querySelector(`#${idGrupo} input`)?.value?.trim() || idGrupo;
+          gruposConVariasImagenes.set(nombreGrupo, imagenesRelacionadas.length);
       }
     }
     if (gruposSinImagen.length > 0) {
@@ -669,7 +719,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     
         return acc;
-    }, []);
+      }, []);
 
       const memberGroupMappings = memberRelations.map(rel => ({
         memberId: rel.source,
@@ -682,7 +732,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (!checkSeleccionado) {
         errors.push("Debe seleccionar un miembro Tutor/Líder como contenedor del esquema.");
-      } else {
+      } 
+      else {
         const miembroContenedor = checkSeleccionado.closest('.dynamic-item');
         const input = miembroContenedor.querySelector('input[type=\"text\"]');
         grupoContenedorNombre = input?.value?.trim();
@@ -695,8 +746,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // Payload completo para creación
-      const fecha = obtenerFechaActualYYYYMMDD();
-      const nombreFinalProyecto = `${projectName}${fecha}`;
+      const fechaHora = obtenerFechaHoraActual();
+      const nombreFinalProyecto = `${projectName}_${fechaHora}`;
       const finalPayload = {
         projectName: nombreFinalProyecto,
         studentTutor,
@@ -731,6 +782,7 @@ document.addEventListener('DOMContentLoaded', () => {
           method: 'POST',
           body: formData
         });
+
         const uploadResult = await uploadResponse.json();
         
         if (!uploadResponse.ok || !uploadResult.success) {
@@ -740,91 +792,101 @@ document.addEventListener('DOMContentLoaded', () => {
       } 
 
       catch (err) {
-        console.error(err);
-        alert("Error de conexión al cargar TIFFs");
+        mostrarError("No se pudo subir los archivos TIFF. Verifica tu conexión.", err);
         return;
       }
 
-  // Creación final del proyecto
-  try {
-    console.log("Final Payload JSON:", JSON.stringify(finalPayload, null, 2));
-    const createResponse = await fetch('/api/projects/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(finalPayload)
-    });
- 
-    let createResult;
-    try {
-      // Intenta decodificar JSON, si es posible
-      createResult = await createResponse.json();
-    }
+      // Creación final del proyecto
+      try {
+        console.log("Final Payload JSON:", JSON.stringify(finalPayload, null, 2));
+        const createResponse = await fetch('/api/projects/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(finalPayload)
+        });
     
-    catch {
-      const rawText = await createResponse.text();
-      alert("❌ Error inesperado del servidor:\n" + rawText);
-      return;     
-    }
+        let createResult;
+        try {
+          // Intenta decodificar JSON, si es posible
+          createResult = await createResponse.json();
+        }
+        
+        catch (err) {
+          const rawText = await createResponse.text();
+          mostrarError("El servidor devolvió una respuesta inesperada:\n\n" + rawText, err);
+          return;
+        }
 
-if (!createResponse.ok || !createResult.success) {
-  const erroresImagenes = Array.isArray(createResult.errores) && createResult.errores.length > 0;
+      if (!createResponse.ok || !createResult.success) {
+        const erroresImagenes = Array.isArray(createResult.errores) && createResult.errores.length > 0;
 
-  if (erroresImagenes) {
-    let mensaje = "❌ El proyecto no se creó por errores en las imágenes:\n\n";
-    for (const err of createResult.errores) {
-      const descripcion = err.error || "Error desconocido";
-      mensaje += `• ${err.imagen}: ${descripcion}\n`;
-    }
-    alert(mensaje);
-  } else {
-    let mensaje = "❌ Error en la creación del proyecto.";
-
-    if (createResult.detail || createResult.msg) {
-      mensaje += "\n\n" + (createResult.detail || createResult.msg);
-    } else {
-      mensaje += "\n\nNo se recibió un mensaje claro del servidor. Revisa la consola o contacta al administrador.";
-    }
-
-    console.error("Error completo recibido del backend:", createResult);
-    alert(mensaje);
-  }
-
-  return;
-}
-
-    // Éxito
-    let resumen = "✅ Proyecto creado exitosamente.\n";
-    if (Array.isArray(createResult.resumen_rasters)) {
-      resumen += "\n Resultado por imagen:\n";
-      for (const r of createResult.resumen_rasters) {
-        if (r.status === "éxito") {
-          resumen += `• ${r.imagen}: ✅ (${r.duracion_segundos} seg)\n`;
+        if (erroresImagenes) {
+          let mensaje = "❌ El proyecto no se creó por errores en las imágenes:\n\n";
+          for (const err of createResult.errores) {
+            const descripcion = err.error || "Error desconocido";
+            mensaje += `• ${err.imagen}: ${descripcion}\n`;
+          }
+          alert(mensaje);
         } else {
-          resumen += `• ${r.imagen}: ❌ ${r.error}\n`;
+          let mensaje = "❌ Error en la creación del proyecto.";
+
+          if (createResult.detail || createResult.msg) {
+            mensaje += "\n\n" + (createResult.detail || createResult.msg);
+          } else {
+            mensaje += "\n\nNo se recibió un mensaje claro del servidor. Revisa la consola o contacta al administrador.";
+          }
+
+          console.error("Error completo recibido del backend:", createResult);
+          alert(mensaje);
+        }
+
+        return;
+      }
+
+      // Éxito
+      let resumen = "✅ Proyecto creado exitosamente.\n";
+      if (Array.isArray(createResult.resumen_rasters)) {
+        resumen += "\n Resultado por imagen:\n";
+        for (const r of createResult.resumen_rasters) {
+          if (r.status === "éxito") {
+            resumen += `• ${r.imagen}: ✅ (${r.duracion_segundos} seg)\n`;
+          } else {
+            resumen += `• ${r.imagen}: ❌ ${r.error}\n`;
+          }
         }
       }
-    }
 
-    alert(resumen);
+      alert(resumen);
 
-  } 
-      
-  catch (err) {
-    alert("❌ Error de red al crear el proyecto. Verifica tu conexión.");
-  }
-      
-  } catch (err) {
-    console.error(err);
-    alert("Error de conexión con el servidor.");
-  }
+      } 
+          
+      catch (err) {
+        mostrarError("No se pudo completar la creación del proyecto. Revisa tu conexión de red.", err);
+      }
+      } 
+
+    catch (err) {
+      mostrarError("Error inesperado en el sistema. Intenta de nuevo o contacta al administrador.", err);
+    } 
   });
 });
 
 //Obtener fecha actual
-function obtenerFechaActualYYYYMMDD() {
+function obtenerFechaHoraActual() {
   const hoy = new Date();
   const yyyy = hoy.getFullYear();
   const mm = String(hoy.getMonth() + 1).padStart(2, '0');
   const dd = String(hoy.getDate()).padStart(2, '0');
-  return `${yyyy}${mm}${dd}`;
+  const hh = String(hoy.getHours()).padStart(2, '0');
+  const min = String(hoy.getMinutes()).padStart(2, '0');
+  const ss = String(hoy.getSeconds()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}_${hh}${min}${ss}`;
+}
+
+//Función para gestionar errores
+function mostrarError(mensajeUsuario, errorObjeto = null) {
+  if (errorObjeto) {
+    console.error("🔴 Error:", errorObjeto);
+  }
+  alert(`❌ ${mensajeUsuario}`);
 }
