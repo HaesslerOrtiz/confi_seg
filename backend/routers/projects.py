@@ -4,7 +4,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Literal
 from collections import Counter
-#from tempfile import TemporaryDirectory
 from backend.database.database import get_connection
 from typing import Optional
 from shapely.geometry import box, mapping
@@ -13,7 +12,6 @@ import traceback
 import tempfile
 import rasterio
 import subprocess
-#import psycopg2
 import shutil
 import uuid
 import time
@@ -69,7 +67,6 @@ class ProjectExecutionRequest(BaseModel):
     memberGroupMappings: List[MemberGroupMapping]
     members: List[Miembro]
     grupoContenedor: str
-
 
 # Obtiene el SRID de un archivo .tif
 def get_raster_srid(tiff_path: str) -> str:
@@ -396,344 +393,6 @@ def crear_segmentaciones(payload: ProjectExecutionRequest, nombre_db: str, grupo
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al crear segmentaciones: {str(e)}")
 
-# Crear miembros y roles
-def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str, fecha_actual: str):
-    try:
-        conn = get_connection(nombre_db)
-        cur = conn.cursor()
-
-        debug_print(" Gestionando miembros y roles...")
-
-        # Crear todos los usuarios (miembros)
-        for miembro in payload.members:
-            usuario = miembro.email
-            cur.execute(f"""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = %s) THEN
-                        EXECUTE format('CREATE ROLE %I LOGIN;', %s);
-                    END IF;
-                END $$;
-            """, (usuario, usuario))
-
-            # Conceder permiso de lectura sobre pg_roles (seguro)
-            cur.execute(f'GRANT SELECT ON pg_roles TO "{usuario}";')
-
-        # Asignar roles de grupo (solo a estudiantes y contribuyentes que estén relacionados)
-        for relacion in payload.memberGroupMappings:
-            miembro = next((m for m in payload.members if m.id == relacion.memberId), None)
-            if not miembro or miembro.role in ["Tutor", "Líder"]:
-                continue  # Los tutores/líderes no se agrupan así
-
-            usuario = miembro.email
-            grupo_id = relacion.groupId
-            grupo_nombre = next((g.groupName for mapping in payload.rasterGroupMappings for g in mapping.groups if g.groupId == grupo_id), None)
-            if not grupo_nombre:
-                continue
-
-            nombre_rol = f"{grupo_nombre}_{fecha_actual}"
-
-            # Crear rol de grupo si no existe
-            cur.execute(f"""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = %s) THEN
-                        EXECUTE format('CREATE ROLE %I;', %s);
-                    END IF;
-                END $$;
-            """, (nombre_rol, nombre_rol))
-
-            # Asignar el usuario a ese rol
-            cur.execute(f'GRANT "{nombre_rol}" TO "{usuario}";')
-
-        # 🔑 Asignar permisos a roles de grupo
-        for mapping in payload.rasterGroupMappings:
-            raster = os.path.splitext(mapping.imageName)[0].lower()
-            for grupo in mapping.groups:
-                esquema = grupo.groupName.lower()
-                tabla_segmentacion = f"{esquema}_{raster}"
-                nombre_rol = f"{esquema}_{fecha_actual}"
-
-                # GRANT RUD sobre su segmentación
-                cur.execute(f"""
-                    GRANT SELECT, UPDATE, DELETE ON {esquema}.{tabla_segmentacion}
-                    TO "{nombre_rol}";
-                """)
-
-                # GRANT SELECT sobre su ráster
-                cur.execute(f"""
-                    GRANT SELECT ON {payload.grupoContenedor}.{raster}
-                    TO "{nombre_rol}";
-                """)
-
-                # GRANT SELECT sobre otras segmentaciones del mismo ráster (si studentTutor = "no")
-                if payload.studentTutor == "no":
-                    for otro_grupo in mapping.groups:
-                        if otro_grupo.groupName != esquema:
-                            tabla_otra_segmentacion = f"{otro_grupo.groupName.lower()}_{raster}"
-                            cur.execute(f"""
-                                GRANT SELECT ON {otro_grupo.groupName.lower()}.{tabla_otra_segmentacion}
-                                TO "{nombre_rol}";
-                            """)
-
-        # 👥 Asignar permisos CRUD directamente a Tutores y Líderes
-        for miembro in payload.members:
-            if miembro.role not in ["Tutor", "Líder"]:
-                continue
-
-            usuario = miembro.email
-
-            for mapping in payload.rasterGroupMappings:
-                raster = os.path.splitext(mapping.imageName)[0].lower()
-
-                # permisos sobre ráster
-                cur.execute(f"""
-                    GRANT SELECT, INSERT, UPDATE, DELETE
-                    ON {payload.grupoContenedor}.{raster}
-                    TO "{usuario}";
-                """)
-
-                for grupo in mapping.groups:
-                    esquema = grupo.groupName.lower()
-                    tabla_segmentacion = f"{esquema}_{raster}"
-                    cur.execute(f"""
-                        GRANT SELECT, INSERT, UPDATE, DELETE
-                        ON {esquema}.{tabla_segmentacion}
-                        TO "{usuario}";
-                    """)
-
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        debug_print("Gestión de miembros y roles completada.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al gestionar miembros y roles: {str(e)}")
-
-# Creación y llenado de tabla parametros_configuracion
-def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectExecutionRequest, fecha_actual: str):
-    try:
-        conn = get_connection(nombre_db)
-        cur = conn.cursor()
-
-        debug_print("Creando tabla parametros_configuracion si no existe...")
-
-        # 1. Crear la tabla si no existe
-        cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {grupo_contenedor}.parametros_configuracion (
-                servantMap TEXT PRIMARY KEY,
-                hostNames TEXT,
-                dbmsNames TEXT,
-                imageNames TEXT,
-                leaderUsernames TEXT,
-                isStudentTutors BOOLEAN,
-                CIAFLevels INTEGER,
-                shpFields TEXT,
-                shpNumFields TEXT,
-                segmenterGroups TEXT
-            );
-        """)
-
-        # 2. Obtener valores comunes
-        host = os.getenv("DB_HOST", "localhost")
-        port = os.getenv("QGIS_SERVER_PORT", "80")
-        is_student_tutor = payload.studentTutor == "si"
-        ciaf_level = int(payload.ciafLevel)
-        campo_ciaf = f"ciaf_{ciaf_level}"
-        campo_id = f"id_ciaf_{ciaf_level}n"
-
-        # Obtener líderes/tutores
-        lideres = [m.email for m in payload.members if m.role in ["Líder", "Tutor"]]
-        lideres_str = ",".join(lideres)
-
-        # Obtener todos los roles de grupo generados
-        roles_segmentacion = set()
-        for rel in payload.memberGroupMappings:
-            miembro = next((m for m in payload.members if m.id == rel.memberId), None)
-            if miembro and miembro.role not in ["Líder", "Tutor"]:
-                grupo = next((g.groupName for mapping in payload.rasterGroupMappings for g in mapping.groups if g.groupId == rel.groupId), None)
-                if grupo:
-                    roles_segmentacion.add(f"{grupo}_{fecha_actual}")
-
-        segmenter_groups_str = ",".join(roles_segmentacion)
-
-        # 3. Insertar una fila por cada imagen
-        for mapping in payload.rasterGroupMappings:
-            nombre_raster = os.path.splitext(mapping.imageName)[0].lower()
-            servant_map = f"https://{host}:{port}/cgi-bin/Segmentations/{nombre_db}/{nombre_raster}/qgis_mapserv.fcgi"
-
-            # Eliminar cualquier configuración anterior con ese servantMap (por seguridad)
-            cur.execute(f"DELETE FROM {grupo_contenedor}.parametros_configuracion WHERE servantMap = %s", (servant_map,))
-
-            # Insertar nuevo registro
-            cur.execute(f"""
-                INSERT INTO {grupo_contenedor}.parametros_configuracion (
-                    servantMap, hostNames, dbmsNames, imageNames,
-                    leaderUsernames, isStudentTutors, CIAFLevels,
-                    shpFields, shpNumFields, segmenterGroups
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                servant_map,
-                host,
-                nombre_db,
-                nombre_raster,
-                lideres_str,
-                is_student_tutor,
-                ciaf_level,
-                campo_ciaf,
-                campo_id,
-                segmenter_groups_str
-            ))
-
-            debug_print(f"Registro insertado para servantMap: {servant_map}")
-
-        conn.commit()
-        cur.close()
-        conn.close()
-        debug_print("Tabla parametros_configuracion creada y registros insertados correctamente.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al crear configuración del proyecto: {str(e)}")
-
-# Función para eliminar/revertir acciones del proyecto
-def revertir_proyecto_fallido(nombre_db: str):
-    debug_print("Iniciando rollback de proyecto fallido...")
-
-    # === Selección de entorno ===
-    # Entorno de desarrollo (comentar en producción)
-    qgis_root = os.getenv("QGIS_PROJECTS_DEV_PATH", "C:/proyectos/dev_qgis_projects")
-
-    # Entorno de producción (descomentar para usar)
-    # qgis_root = "/cgi-bin/Segmentations"
-
-    ruta_proyecto_qgis = os.path.join(qgis_root, nombre_db.lower())
-
-    # 1. Eliminar carpeta de proyecto QGIS
-    try:
-        if os.path.exists(ruta_proyecto_qgis):
-            shutil.rmtree(ruta_proyecto_qgis)
-            debug_print(f"Carpeta de proyecto QGIS eliminada: {ruta_proyecto_qgis}")
-    except Exception as e:
-        debug_print(f" No se pudo eliminar carpeta QGIS: {e}")
-
-    # 2. Eliminar base de datos si existe
-    try:
-        conn = get_connection("postgres")
-        conn.autocommit = True
-        cur = conn.cursor()
-
-        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (nombre_db,))
-        if cur.fetchone():
-            cur.execute(f"""
-                SELECT pg_terminate_backend(pg_stat_activity.pid)
-                FROM pg_stat_activity
-                WHERE pg_stat_activity.datname = %s
-                  AND pid <> pg_backend_pid();
-            """, (nombre_db,))
-            cur.execute(f"DROP DATABASE IF EXISTS {nombre_db}")
-            debug_print(f"Base de datos eliminada: {nombre_db}")
-
-        cur.close()
-        conn.close()
-    except Exception as e:
-        debug_print(f" No se pudo eliminar base de datos: {e}")
-    
-        # 3. Revocar y eliminar roles de grupo del proyecto actual
-    try:
-        conn = get_connection("postgres")
-        conn.autocommit = True
-        cur = conn.cursor()
-
-        # Extraer fecha desde el nombre del proyecto
-        import re
-        match = re.search(r'(\d{8})$', nombre_db)
-        fecha_proyecto = match.group(1) if match else None
-
-        if not fecha_proyecto:
-            debug_print(f" No se pudo extraer la fecha del nombre del proyecto: {nombre_db}")
-            cur.close()
-            conn.close()
-            return
-
-        debug_print(f" Buscando roles de grupo asociados a la fecha del proyecto: {fecha_proyecto}")
-
-        # 3.1 Encontrar roles de grupo del proyecto actual
-        cur.execute("""
-            SELECT rolname
-            FROM pg_roles
-            WHERE rolcanlogin = false AND rolname LIKE %s;
-        """, (f'%_{fecha_proyecto}',))
-
-        roles_grupo = [row[0] for row in cur.fetchall()]
-        debug_print(f"Roles de grupo detectados: {roles_grupo}")
-
-        for rol in roles_grupo:
-            # 3.2 Revocar el rol de todos los usuarios que lo tengan asignado
-            cur.execute("""
-                SELECT member::regrole::text
-                FROM pg_auth_members
-                WHERE roleid = (SELECT oid FROM pg_roles WHERE rolname = %s)
-            """, (rol,))
-            miembros = [row[0] for row in cur.fetchall()]
-
-            for miembro in miembros:
-                try:
-                    cur.execute(f'REVOKE "{rol}" FROM "{miembro}";')
-                    debug_print(f"Revocado {rol} de {miembro}")
-                except Exception as e_revoke:
-                    debug_print(f" Error al revocar {rol} de {miembro}: {e_revoke}")
-
-            # 3.3 Eliminar el rol de grupo
-            try:
-                cur.execute(f'DROP ROLE IF EXISTS "{rol}";')
-                debug_print(f"Rol de grupo eliminado: {rol}")
-            except Exception as e_drop:
-                debug_print(f" No se pudo eliminar el rol de grupo {rol}: {e_drop}")
-
-        cur.close()
-        conn.close()
-
-    except Exception as e:
-        debug_print(f" Error en la limpieza de roles de grupo: {e}")
-
-        # 3.1 Encontrar roles de grupo del proyecto actual
-        cur.execute("""
-            SELECT rolname
-            FROM pg_roles
-            WHERE rolcanlogin = false AND rolname LIKE %s;
-        """, (f'%_{fecha_proyecto}',))
-
-        roles_grupo = [row[0] for row in cur.fetchall()]
-        debug_print(f"Roles de grupo detectados: {roles_grupo}")
-
-        for rol in roles_grupo:
-            # 3.2 Revocar el rol de todos los usuarios que lo tengan asignado
-            cur.execute("""
-                SELECT member::regrole::text
-                FROM pg_auth_members
-                WHERE roleid = (SELECT oid FROM pg_roles WHERE rolname = %s)
-            """, (rol,))
-            miembros = [row[0] for row in cur.fetchall()]
-
-            for miembro in miembros:
-                try:
-                    cur.execute(f'REVOKE "{rol}" FROM "{miembro}";')
-                    debug_print(f"Revocado {rol} de {miembro}")
-                except Exception as e_revoke:
-                    debug_print(f" Error al revocar {rol} de {miembro}: {e_revoke}")
-
-            # 3.3 Eliminar el rol de grupo
-            try:
-                cur.execute(f'DROP ROLE IF EXISTS "{rol}";')
-                debug_print(f"Rol de grupo eliminado: {rol}")
-            except Exception as e_drop:
-                debug_print(f" No se pudo eliminar el rol de grupo {rol}: {e_drop}")
-
-        cur.close()
-        conn.close()
-
-    except Exception as e:
-        debug_print(f" Error en la limpieza de roles de grupo: {e}")
-
 # Ejecución de proyectos QGIS
 def ejecutar_qgis_script(payload: ProjectExecutionRequest, nombre_db: str, grupo_contenedor: str) -> list:
     import tempfile
@@ -752,7 +411,11 @@ def ejecutar_qgis_script(payload: ProjectExecutionRequest, nombre_db: str, grupo
     # 2. Ruta al script y ejecutable
     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "qgis_tools", "generar_proyecto_qgis.py"))
     debug_print(f"Ruta absoluta al script QGIS: {script_path}")
-    ejecutable_qgis = r"C:\OSGeo4W64\bin\python-qgis.bat" # Tomar de variable de ambiente
+    #ejecutable_qgis = r"C:\OSGeo4W64\bin\python-qgis.bat" # Tomar de variable de ambiente
+    ejecutable_qgis = os.getenv("QGIS_EXECUTABLE")
+    if not ejecutable_qgis:
+        raise RuntimeError("La variable de entorno QGIS_EXECUTABLE no está definida en el archivo .env")
+
     comando = [ejecutable_qgis, script_path, ruta_json]
 
     # 3. Ejecutar subproceso
@@ -796,13 +459,366 @@ def ejecutar_qgis_script(payload: ProjectExecutionRequest, nombre_db: str, grupo
             detail=f"La salida del script QGIS no es un JSON válido: {str(e)}"
         )
 
+# Crear miembros y roles
+def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str, fecha_actual: str):
+    try:
+        conn = get_connection(nombre_db)
+        cur = conn.cursor()
+
+        debug_print(">>> Ejecutando versión corregida de gestionar_miembros_y_roles")
+
+        # BLOQUE 1: Crear usuarios tipo LOGIN
+        for miembro in payload.members:
+            usuario = miembro.email
+            usuario_safe = usuario.replace('"', '').replace("'", "")
+            cur.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{usuario_safe}') THEN
+                        EXECUTE format('CREATE ROLE "%s" LOGIN', '{usuario_safe}');
+                    END IF;
+                END $$;
+            """)
+            # Permiso básico de introspección
+            cur.execute(f'GRANT SELECT ON pg_roles TO "{usuario_safe}";')
+
+        # BLOQUE 2: Crear roles de grupo (uno por grupo definido en la GUI)
+        for grupo in payload.groupNames:
+            nombre_rol = f"{grupo}_{fecha_actual}"
+            cur.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{nombre_rol}') THEN
+                        EXECUTE format('CREATE ROLE %I', '{nombre_rol}');
+                    END IF;
+                END $$;
+            """)
+
+        # BLOQUE 3: Otorgar permisos a roles de grupo
+        for mapping in payload.rasterGroupMappings:
+            raster = os.path.splitext(mapping.imageName)[0].lower()
+            for grupo in mapping.groups:
+                esquema = grupo.groupName.lower()
+                tabla_segmentacion = f"{esquema}_{raster}"
+                nombre_rol = f"{esquema}_{fecha_actual}"
+
+                cur.execute(f"""
+                    GRANT SELECT, INSERT, UPDATE, DELETE
+                    ON {esquema}.{tabla_segmentacion}
+                    TO "{nombre_rol}";
+                """)
+                cur.execute(f"""
+                    GRANT SELECT
+                    ON {payload.grupoContenedor}.{raster}
+                    TO "{nombre_rol}";
+                """)
+
+                if payload.studentTutor == "no":
+                    for otro_grupo in mapping.groups:
+                        otro_esquema = otro_grupo.groupName.lower()
+                        if otro_esquema != esquema:
+                            otra_tabla = f"{otro_esquema}_{raster}"
+                            cur.execute(f"""
+                                GRANT SELECT
+                                ON {otro_esquema}.{otra_tabla}
+                                TO "{nombre_rol}";
+                            """)
+
+        # BLOQUE 4: Asignar roles de grupo a miembros (Estudiantes y Contribuyentes)
+        for relacion in payload.memberGroupMappings:
+            miembro = next((m for m in payload.members if m.id == relacion.memberId), None)
+            if not miembro or miembro.role in ["Tutor", "Líder"]:
+                continue
+
+            usuario = miembro.email
+            usuario_safe = usuario.replace('"', '').replace("'", "")
+            grupo_id = relacion.groupId
+
+            grupo_nombre = next(
+                (g.groupName for mapping in payload.rasterGroupMappings for g in mapping.groups if g.groupId == grupo_id),
+                None
+            )
+
+            if grupo_nombre is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"No se encontró un nombre de grupo correspondiente a groupId='{grupo_id}' en el payload."
+                )
+
+            nombre_rol = f"{grupo_nombre}_{fecha_actual}"
+            cur.execute(f'GRANT "{nombre_rol}" TO "{usuario_safe}";')
+
+        # BLOQUE 5: Crear rol tutor del proyecto
+        nombre_rol_tutor = f"tutor_{nombre_db}"
+        cur.execute(f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{nombre_rol_tutor}') THEN
+                    EXECUTE format('CREATE ROLE %I', '{nombre_rol_tutor}');
+                END IF;
+            END $$;
+        """)
+
+        # BLOQUE 6: Otorgar permisos al rol tutor del proyecto
+        for mapping in payload.rasterGroupMappings:
+            raster = os.path.splitext(mapping.imageName)[0].lower()
+
+            cur.execute(f"""
+                GRANT SELECT, INSERT, UPDATE, DELETE
+                ON {payload.grupoContenedor}.{raster}
+                TO "{nombre_rol_tutor}";
+            """)
+            for grupo in mapping.groups:
+                esquema = grupo.groupName.lower()
+                tabla_segmentacion = f"{esquema}_{raster}"
+                cur.execute(f"""
+                    GRANT SELECT, INSERT, UPDATE, DELETE
+                    ON {esquema}.{tabla_segmentacion}
+                    TO "{nombre_rol_tutor}";
+                """)
+
+        # BLOQUE 7: Asignar rol tutor a Tutores y Líderes
+        for miembro in payload.members:
+            if miembro.role in ["Tutor", "Líder"]:
+                usuario = miembro.email
+                usuario_safe = usuario.replace('"', '').replace("'", "")
+                cur.execute(f'GRANT "{nombre_rol_tutor}" TO "{usuario_safe}";')
+                debug_print(f'Asignado rol "{nombre_rol_tutor}" al usuario {usuario_safe}')
+
+        # BLOQUE FINAL: Confirmar y cerrar
+        conn.commit()
+        cur.close()
+        conn.close()
+        debug_print("Gestión de miembros y roles completada.")
+
+    except Exception as e:
+        debug_print("Traza de error:")
+        debug_print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Ocurrió un problema al crear usuarios y roles. Contacta al administrador.")
+
+# Creación y llenado de tabla parametros_configuracion
+def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectExecutionRequest, fecha_actual: str):
+    try:
+        conn = get_connection(nombre_db)
+        cur = conn.cursor()
+
+        debug_print("Creando tabla parametros_configuracion si no existe...")
+
+        # 1. Crear la tabla si no existe
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {grupo_contenedor}.parametros_configuracion (
+                servantMap TEXT PRIMARY KEY,
+                hostNames TEXT,
+                dbmsNames TEXT,
+                imageNames TEXT,
+                leaderUsernames TEXT,
+                isStudentTutors BOOLEAN,
+                CIAFLevels INTEGER,
+                shpFields TEXT,
+                shpNumFields TEXT,
+                segmenterGroups TEXT
+            );
+        """)
+
+        # 2. Obtener valores comunes
+        host = os.getenv("DB_HOST", "localhost")
+        port = os.getenv("QGIS_SERVER_PORT", "80")
+        is_student_tutor = payload.studentTutor == "si"
+        ciaf_level = int(payload.ciafLevel)
+        campo_ciaf = f"ciaf_{ciaf_level}"
+        campo_id = f"id_ciaf_{ciaf_level}n"
+
+        # Obtener líderes/tutores
+        lideres = [m.email for m in payload.members if m.role in ["Líder", "Tutor"]]
+        lideres_str = ",".join(lideres)
+
+        # Obtener todos los roles de grupo generados
+        roles_segmentacion = set()
+        for rel in payload.memberGroupMappings:
+            miembro = next((m for m in payload.members if m.id == rel.memberId), None)
+            if miembro and miembro.role not in ["Líder", "Tutor"]:
+                grupo = next(
+                    (g.groupName for mapping in payload.rasterGroupMappings for g in mapping.groups if g.groupId == rel.groupId),
+                    None
+                )
+
+                if grupo is None:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"No se pudo determinar el nombre del grupo para groupId='{rel.groupId}' en la configuración del proyecto."
+                    )
+
+                roles_segmentacion.add(f"{grupo}_{fecha_actual}")
+
+        segmenter_groups_str = ",".join(roles_segmentacion)
+
+        #Validar que todos los roles de segmentación realmente existen en PostgreSQL
+        for rol_seg in roles_segmentacion:
+            cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (rol_seg,))
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"El rol de segmentación '{rol_seg}' no existe en PostgreSQL. Asegúrate de haber ejecutado correctamente gestionar_miembros_y_roles()."
+                )
+
+        # 3. Insertar una fila por cada imagen
+        for mapping in payload.rasterGroupMappings:
+            nombre_raster = os.path.splitext(mapping.imageName)[0].lower()
+            servant_map = f"https://{host}:{port}/cgi-bin/Segmentations/{nombre_db}/{nombre_raster}/qgis_mapserv.fcgi"
+
+            # Eliminar cualquier configuración anterior con ese servantMap (por seguridad)
+            cur.execute(f"DELETE FROM {grupo_contenedor}.parametros_configuracion WHERE servantMap = %s", (servant_map,))
+
+            # Insertar nuevo registro
+            cur.execute(f"""
+                INSERT INTO {grupo_contenedor}.parametros_configuracion (
+                    servantMap, hostNames, dbmsNames, imageNames,
+                    leaderUsernames, isStudentTutors, CIAFLevels,
+                    shpFields, shpNumFields, segmenterGroups
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                servant_map,
+                host,
+                nombre_db,
+                nombre_raster,
+                lideres_str,
+                is_student_tutor,
+                ciaf_level,
+                campo_ciaf,
+                campo_id,
+                segmenter_groups_str
+            ))
+
+            debug_print(f"Registro insertado para servantMap: {servant_map}")
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        debug_print("Tabla parametros_configuracion creada y registros insertados correctamente.")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al crear configuración del proyecto: {str(e)}")
+
+# Función para eliminar/revertir acciones del proyecto
+def revertir_proyecto_fallido(nombre_db: str):
+    debug_print("Iniciando rollback de proyecto fallido...")
+
+    # Selección de entorno
+    # Entorno de desarrollo (comentar en producción)
+    qgis_root = os.getenv("QGIS_PROJECTS_DEV_PATH", "C:/proyectos/dev_qgis_projects")
+
+    # Entorno de producción (descomentar para usar)
+    # qgis_root = "/cgi-bin/Segmentations"
+
+    ruta_proyecto_qgis = os.path.join(qgis_root, nombre_db.lower())
+
+    # 1. Eliminar carpeta de proyecto QGIS
+    try:
+        if os.path.exists(ruta_proyecto_qgis):
+            shutil.rmtree(ruta_proyecto_qgis)
+            debug_print(f"Carpeta de proyecto QGIS eliminada: {ruta_proyecto_qgis}")
+    except Exception as e:
+        debug_print(f"No se pudo eliminar carpeta QGIS: {e}")
+
+    # 2. Eliminar base de datos si existe
+    try:
+        conn = get_connection("postgres")
+        conn.autocommit = True
+        cur = conn.cursor()
+
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (nombre_db,))
+        if cur.fetchone():
+            cur.execute(f"""
+                SELECT pg_terminate_backend(pg_stat_activity.pid)
+                FROM pg_stat_activity
+                WHERE pg_stat_activity.datname = %s
+                  AND pid <> pg_backend_pid();
+            """, (nombre_db,))
+            cur.execute(f"DROP DATABASE IF EXISTS {nombre_db}")
+            debug_print(f"Base de datos eliminada: {nombre_db}")
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        debug_print(f"No se pudo eliminar base de datos: {e}")
+
+    # 3. Revocar y eliminar roles de grupo del proyecto actual
+    try:
+        conn = get_connection("postgres")
+        conn.autocommit = True
+        cur = conn.cursor()
+
+        # Extraer fecha desde el nombre del proyecto
+        import re
+        match = re.search(r'(\d{8}_\d{6})$', nombre_db)
+        fecha_proyecto = match.group(1) if match else None
+
+        if not fecha_proyecto:
+            debug_print(f"No se pudo extraer la fecha del nombre del proyecto: {nombre_db}")
+            cur.close()
+            conn.close()
+            return
+
+        debug_print(f"Buscando roles de grupo asociados a la fecha del proyecto: {fecha_proyecto}")
+
+        # 3.1 Encontrar roles de grupo del proyecto actual
+        cur.execute("""
+            SELECT rolname
+            FROM pg_roles
+            WHERE rolcanlogin = false AND rolname ~ %s;
+        """, (f'_{fecha_proyecto}(_\\d{{6}})?$',))
+
+        roles_grupo = [row[0] for row in cur.fetchall()]
+        debug_print(f"Roles de grupo detectados: {roles_grupo}")
+
+        for rol in roles_grupo:
+            # Obtener OID del rol
+            cur.execute("""
+                SELECT oid FROM pg_roles WHERE rolname = %s
+            """, (rol,))
+            row_oid = cur.fetchone()
+
+            if not row_oid:
+                debug_print(f"Rol no encontrado (puede haber sido eliminado): {rol}")
+                continue
+
+            rol_oid = row_oid[0]
+
+            # 3.2 Revocar el rol de todos los usuarios que lo tengan asignado
+            cur.execute("""
+                SELECT member::regrole::text
+                FROM pg_auth_members
+                WHERE roleid = %s
+            """, (rol_oid,))
+            miembros = [r[0] for r in cur.fetchall()]
+
+            for miembro in miembros:
+                try:
+                    cur.execute(f'REVOKE "{rol}" FROM "{miembro}";')
+                    debug_print(f"Revocado {rol} de {miembro}")
+                except Exception as e_revoke:
+                    debug_print(f"Error al revocar {rol} de {miembro}: {e_revoke}")
+
+            # 3.3 Eliminar el rol de grupo
+            try:
+                cur.execute(f'DROP ROLE IF EXISTS "{rol}";')
+                debug_print(f"Rol de grupo eliminado: {rol}")
+            except Exception as e_drop:
+                debug_print(f"No se pudo eliminar el rol de grupo {rol}: {e_drop}")
+
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        debug_print(f"Error en la limpieza de roles de grupo: {e}")
+
 # Endpoint para creación de elementos en el servidor postgresql
 @router.post("/upload-tiffs")
 async def upload_tiffs(projectName: str = Form(...), files: List[UploadFile] = File(...)):
     try:
         global UPLOAD_DIR
 
-        # === Selección de entorno ===
+        # Selección de entorno
         # Entorno de desarrollo (comentar en producción)
         UPLOAD_DIR = tempfile.mkdtemp(prefix="tiff_uploads_")
 
@@ -812,7 +828,7 @@ async def upload_tiffs(projectName: str = Form(...), files: List[UploadFile] = F
 
         debug_print(f"Carpeta temporal creada: {UPLOAD_DIR}")
 
-        # === Validaciones de archivos ===
+        # Validaciones de archivos
         allowed_exts = ['tif', 'tiff']
         nombre_invalido = re.compile(r'^[a-z0-9_]+$')
 
@@ -905,7 +921,10 @@ async def create_project(payload: ProjectExecutionRequest):
         crear_segmentaciones(payload, payload.projectName, payload.grupoContenedor)
 
         # Fecha actual para nombrar roles de grupo y servantMaps
-        fecha_actual = datetime.today().strftime("%Y%m%d")
+        match = re.search(r'_(\d{8}_\d{6})$', payload.projectName)
+        if not match:
+            raise HTTPException(status_code=500, detail="No se pudo extraer la fecha del nombre del proyecto.")
+        fecha_actual = match.group(1)
 
         # Generar proyectos QGIS por imagen
         try:
@@ -922,26 +941,27 @@ async def create_project(payload: ProjectExecutionRequest):
         
         
         # Asignar usuarios, roles y permisos SQL
-        '''
         try:
             gestionar_miembros_y_roles(payload, payload.projectName, fecha_actual)
             debug_print("Miembros y roles gestionados correctamente.")
         except Exception as e_roles:
-            raise HTTPException(status_code=500, detail=f"Error al gestionar miembros y roles: {str(e_roles)}")
-
+            raise HTTPException(
+                status_code=500,
+                detail="Ocurrió un error inesperado al asignar los usuarios y roles del proyecto. Ccontacta al administrador."
+            )
+    
         # Crear e insertar párametros en la tabla parametros_configuracion
         try:
             crear_configuracion(payload.projectName, payload.grupoContenedor, payload, fecha_actual)
         except Exception as e_config:
             raise HTTPException(status_code=500, detail=f"Error al crear configuración del proyecto: {str(e_config)}")
-        '''
 
-        # ✅ RESPUESTA FINAL TEMPORAL DE ÉXITO
+        #  RESPUESTA FINAL DE ÉXITO
         return JSONResponse(
             status_code=200,
             content={
                 "success": True,
-                "msg": f"✅ El proyecto '{payload.projectName}' se ejecutó correctamente hasta la generación de proyectos QGIS.",
+                "msg": f"El proyecto '{payload.projectName}' se generó correctamente.",
                 "resumen_rasters": resumen_rasters,
                 "resumen_qgis": resumen_qgis
             }
