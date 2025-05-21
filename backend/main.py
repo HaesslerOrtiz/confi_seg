@@ -1,5 +1,4 @@
 # backend/main.py
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +19,6 @@ app.add_middleware(
 
 # Incluye rutas API
 app.include_router(login.router)
-app.include_router(projects.router)
 app.include_router(projects.router)
 
 # Frontend
