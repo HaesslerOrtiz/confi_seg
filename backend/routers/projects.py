@@ -611,12 +611,12 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
                 hostNames TEXT,
                 dbmsNames TEXT,
                 imageNames TEXT,
-                leaderUsernames TEXT,
+                leaderUsernames TEXT [],
                 isStudentTutors BOOLEAN,
                 CIAFLevels INTEGER,
                 shpFields TEXT,
-                shpNumFields TEXT,
-                segmenterGroups TEXT
+                shpNumFields INTEGER,
+                segmenterGroups TEXT []
             );
         """)
 
@@ -630,7 +630,7 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
 
         # Obtener líderes/tutores
         lideres = [m.email for m in payload.members if m.role in ["Líder", "Tutor"]]
-        lideres_str = ",".join(lideres)
+        lideres_list = lideres  # ya es una lista de strings
 
         # Obtener todos los roles de grupo generados
         roles_segmentacion = set()
@@ -650,7 +650,7 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
 
                 roles_segmentacion.add(f"{grupo}_{fecha_actual}")
 
-        segmenter_groups_str = ",".join(roles_segmentacion)
+        segmenter_groups_list = list(roles_segmentacion)
 
         #Validar que todos los roles de segmentación realmente existen en PostgreSQL
         for rol_seg in roles_segmentacion:
@@ -681,12 +681,12 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
                 host,
                 nombre_db,
                 nombre_raster,
-                lideres_str,
+                lideres_list,
                 is_student_tutor,
                 ciaf_level,
                 campo_ciaf,
                 campo_id,
-                segmenter_groups_str
+                segmenter_groups_list
             ))
 
             debug_print(f"Registro insertado para servantMap: {servant_map}")
