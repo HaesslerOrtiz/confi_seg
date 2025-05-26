@@ -465,7 +465,7 @@ def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str,
         conn = get_connection(nombre_db)
         cur = conn.cursor()
 
-        debug_print(">>> Ejecutando versión corregida de gestionar_miembros_y_roles")
+        debug_print("Ejecutando gestión de miembros y roles")
 
         # BLOQUE 1: Crear usuarios tipo LOGIN
         for miembro in payload.members:
@@ -479,7 +479,7 @@ def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str,
                     END IF;
                 END $$;
             """)
-            # Permiso básico de introspección
+            # Permiso básico
             cur.execute(f'GRANT SELECT ON pg_roles TO "{usuario_safe}";')
 
         # BLOQUE 2: Crear roles de grupo (uno por grupo definido en la GUI)
