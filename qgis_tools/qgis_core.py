@@ -17,7 +17,7 @@ class RasterGroupMapping:
         self.imageId = imageId
         self.imageName = imageName
         self.srid = srid
-        self.groups = groups  # lista de Segmentacion
+        self.groups = groups
 
 class MemberGroupMapping:
     def __init__(self, memberId, groupId):
@@ -104,8 +104,8 @@ def generar_proyectos_qgis(payload, nombre_db, grupo_contenedor):
             proyecto.addMapLayer(capa_raster)
         
         else:
-            print(f"❌ Capa ráster NO válida: {nombre_raster}", file=sys.stderr)
-            print(f"→ URI usada: {raster_uri}", file=sys.stderr)
+            print(f"Capa ráster NO válida: {nombre_raster}", file=sys.stderr)
+            print(f"URI usada: {raster_uri}", file=sys.stderr)
 
         esquemas_relevantes = set()
         for grupo in mapping_raster.groups:

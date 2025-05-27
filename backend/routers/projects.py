@@ -106,6 +106,7 @@ def validar_y_determinar_srids(raster_mappings: List[RasterGroupMapping]) -> lis
         try:
             # Esto lanza HTTPException si falla
             srid = get_raster_srid(tiff_path)
+            raster.srid = srid
         except HTTPException as e:
             errores.append({
                 "imagen": image_name,
@@ -507,6 +508,11 @@ def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str,
                     ON {esquema}.{tabla_segmentacion}
                     TO "{nombre_rol}";
                 """)
+
+                cur.execute(f"""
+                    GRANT USAGE ON SCHEMA {esquema} TO "{nombre_rol}";
+                """)
+                
                 cur.execute(f"""
                     GRANT SELECT
                     ON {payload.grupoContenedor}.{raster}
@@ -568,6 +574,11 @@ def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str,
                 ON {payload.grupoContenedor}.{raster}
                 TO "{nombre_rol_tutor}";
             """)
+
+            cur.execute(f"""
+                GRANT USAGE ON SCHEMA {payload.grupoContenedor} TO "{nombre_rol_tutor}";
+            """)
+
             for grupo in mapping.groups:
                 esquema = grupo.groupName.lower()
                 tabla_segmentacion = f"{esquema}_{raster}"
@@ -575,6 +586,10 @@ def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str,
                     GRANT SELECT, INSERT, UPDATE, DELETE
                     ON {esquema}.{tabla_segmentacion}
                     TO "{nombre_rol_tutor}";
+                """)
+
+                cur.execute(f"""
+                    GRANT USAGE ON SCHEMA {esquema} TO "{nombre_rol_tutor}";
                 """)
 
         # BLOQUE 7: Asignar rol tutor a Tutores y Líderes
@@ -597,7 +612,7 @@ def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str,
         raise HTTPException(status_code=500, detail=f"Ocurrió un problema al crear usuarios y roles. Contacta al administrador.")
 
 # Creación y llenado de tabla parametros_configuracion
-def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectExecutionRequest, fecha_actual: str):
+def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectExecutionRequest, fecha_actual: str, resumen_qgis: list):
     try:
         conn = get_connection(nombre_db)
         cur = conn.cursor()
@@ -615,7 +630,7 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
                 isStudentTutors BOOLEAN,
                 CIAFLevels INTEGER,
                 shpFields TEXT,
-                shpNumFields INTEGER,
+                shpNumFields TEXT,
                 segmenterGroups TEXT []
             );
         """)
@@ -664,7 +679,9 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
         # 3. Insertar una fila por cada imagen
         for mapping in payload.rasterGroupMappings:
             nombre_raster = os.path.splitext(mapping.imageName)[0].lower()
-            servant_map = f"https://{host}:{port}/cgi-bin/Segmentations/{nombre_db}/{nombre_raster}/qgis_mapserv.fcgi"
+            servant_map = next((r["servantMap"] for r in resumen_qgis if r["imagen"] == mapping.imageName), None)
+            if not servant_map:
+                raise HTTPException(status_code=500, detail=f"No se encontró servantMap para la imagen '{mapping.imageName}' devuelta por el componente QGIS.")
 
             # Eliminar cualquier configuración anterior con ese servantMap (por seguridad)
             cur.execute(f"DELETE FROM {grupo_contenedor}.parametros_configuracion WHERE servantMap = %s", (servant_map,))
@@ -697,7 +714,10 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
         debug_print("Tabla parametros_configuracion creada y registros insertados correctamente.")
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al crear configuración del proyecto: {str(e)}")
+        if "invalid input syntax for type integer" in str(e):
+            raise HTTPException(status_code=500, detail="Hubo un error al guardar los parámetros del proyecto. Contacta al administrador.")
+        else:
+            raise HTTPException(status_code=500, detail="Error inesperado al guardar la configuración del proyecto.")
 
 # Función para eliminar/revertir acciones del proyecto
 def revertir_proyecto_fallido(nombre_db: str):
@@ -793,6 +813,9 @@ def revertir_proyecto_fallido(nombre_db: str):
             miembros = [r[0] for r in cur.fetchall()]
 
             for miembro in miembros:
+                if not miembro.strip():
+                    debug_print(f"Miembro vacío al intentar revocar {rol}")
+                    continue
                 try:
                     cur.execute(f'REVOKE "{rol}" FROM "{miembro}";')
                     debug_print(f"Revocado {rol} de {miembro}")
@@ -893,13 +916,13 @@ async def create_project(payload: ProjectExecutionRequest):
                     "errores": errores_imagenes
                 }
             )
-
+        '''
         # Asignar (y validar) SRID validado a cada raster
         for raster in payload.rasterGroupMappings:
             tiff_path = os.path.join(UPLOAD_DIR, raster.imageName)
             raster.srid = get_raster_srid(tiff_path)
             debug_print(f"SRID asignado para '{raster.imageName}': {raster.srid}")
-
+        '''
         # Acciones sobre el servidor PostgreSQL
         crear_base_de_datos(payload.projectName)
         habilitar_extensiones(payload.projectName)
@@ -920,7 +943,7 @@ async def create_project(payload: ProjectExecutionRequest):
         
         crear_segmentaciones(payload, payload.projectName, payload.grupoContenedor)
 
-        # Fecha actual para nombrar roles de grupo y servantMaps
+        # Fecha actual para nombrar roles de grupo
         match = re.search(r'_(\d{8}_\d{6})$', payload.projectName)
         if not match:
             raise HTTPException(status_code=500, detail="No se pudo extraer la fecha del nombre del proyecto.")
@@ -952,7 +975,7 @@ async def create_project(payload: ProjectExecutionRequest):
     
         # Crear e insertar párametros en la tabla parametros_configuracion
         try:
-            crear_configuracion(payload.projectName, payload.grupoContenedor, payload, fecha_actual)
+            crear_configuracion(payload.projectName, payload.grupoContenedor, payload, fecha_actual, resumen_qgis)
         except Exception as e_config:
             raise HTTPException(status_code=500, detail=f"Error al crear configuración del proyecto: {str(e_config)}")
 
