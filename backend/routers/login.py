@@ -2,7 +2,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from backend.database.database import get_connection
-import psycopg2
 
 router = APIRouter(prefix="/api", tags=["login"])
 
@@ -21,19 +20,19 @@ def tiene_rol_configurador(username: str) -> bool:
             WHERE r.rolname = 'rol_configurador' AND u.rolname = %s
         """, (username,))
         result = cur.fetchone()
-        cur.close()
         return result is not None
     finally:
+        cur.close()
         conn.close()
 
 @router.post("/login")
 def login(request: LoginRequest):
     username = request.username.strip()
-    try:
-        if not tiene_rol_configurador(username):
-            raise HTTPException(status_code=403, detail="Ingresar un usuario con los permisos adecuados")
-        return {"message": "Login exitoso"}
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail="Error en la conexión a la base de datos")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Error inesperado en el servidor")
+
+    if not username:
+        raise HTTPException(status_code=400, detail="El nombre de usuario es obligatorio")
+
+    if not tiene_rol_configurador(username):
+        raise HTTPException(status_code=403, detail="Ingresar un usuario con los permisos adecuados")
+
+    return {"message": "Login exitoso"}
