@@ -29,9 +29,6 @@ def tiene_rol_configurador(username: str) -> bool:
 def login(request: LoginRequest):
     username = request.username.strip()
 
-    if not username:
-        raise HTTPException(status_code=400, detail="El nombre de usuario es obligatorio")
-
     if not tiene_rol_configurador(username):
         raise HTTPException(status_code=403, detail="Ingresar un usuario con los permisos adecuados")
 
