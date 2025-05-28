@@ -1,7 +1,7 @@
 /*frontend/assets/css/styles.css */
 body {
     font-family: Arial, sans-serif;
-    background-color: #f5f5f5;
+    background-color: #f5f5f5; /* Gris claro */
     margin: 0;
     padding: 0;
 }
@@ -13,6 +13,11 @@ header {
     background-color: white;
     padding: 10px 20px;
     border-bottom: 1px solid #ccc;
+    position: fixed;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: 1000;
 }
 
 header button {
@@ -31,7 +36,20 @@ header button:hover {
 
 /* Contenedor principal */
 .main-container {
-    margin: 40px;
+    max-width: 1200px;
+    margin: 40px auto;
+    padding: 0 20px;
+}
+
+body.proyecto-page .main-container {
+    margin-top: 80px; /* Espacio para el header fijo */
+}
+
+/* Escala solo el contenido principal, no el header */
+body.proyecto-page .scaled-container {
+    transform: scale(0.7);
+    transform-origin: top left;
+    width: 143%;
 }
 
 /* Título principal */
@@ -87,22 +105,22 @@ header button:hover {
     display: flex;
     justify-content: flex-start;
     align-items: flex-start;
-    gap: 300px; /* Igual separación en los contenedores dinámicos */
+    gap: 300px;
     margin-top: 40px;
 }
 
 .dynamic-container {
-    min-width: 300px; 
-    padding: 15px;
-    border: 2px dashed rgba(0, 64, 128, 0.3);
-    border-radius: 8px;
-    margin: 10px;
+    min-width: 300px;
+    padding: 20px !important;
+    margin: 15px 0;
+    border: none !important;
+    min-height: 200px;
 }
 
 /* Elementos individuales */
 .dynamic-item {
     position: relative;
-    margin: 15px;
+    margin: 10px 0;
     padding: 15px;
     border: 1px solid #004080;
     border-radius: 8px;
@@ -161,24 +179,7 @@ header button:hover {
     background-color: #0066cc;
 }
 
-/* Quitar borde dashed innecesario */
-.dynamic-container {
-    border: none !important;
-    min-height: auto !important;
-    padding: 0;
-}
-
-.conectable {
-    position: relative;
-    background: white;
-    z-index: 1;
-}
-
-.leader-line {
-    z-index: 0;
-    pointer-events: auto !important;
-}
-
+/* Líneas y conexiones */
 .conectable {
     position: relative;
     border: 1px solid #004080;
@@ -186,6 +187,7 @@ header button:hover {
     margin: 10px;
     border-radius: 8px;
     background: white;
+    z-index: 1;
 }
 
 .leader-line {
@@ -207,25 +209,84 @@ header button:hover {
     top: 50%;
     transform: translateY(-50%);
     cursor: pointer;
-    z-index: 1001; 
+    z-index: 1001;
 }
 
-.connection-point.left { left: -20px; }
-.connection-point.right { right: -20px; }
-
-.dynamic-container {
-    min-height: 200px;
-    border: none;
-    padding: 20px !important;
-    margin: 15px 0;
+.connection-point.left {
+    left: -20px;
 }
 
-.dynamic-item {
-    position: relative;
-    margin: 10px 0;
-    padding: 15px;
+.connection-point.right {
+    right: -20px;
+}
+
+/* Contenedor del login */
+.container {
+    background-color: white;
+    padding: 50px 40px;
+    border-radius: 12px;
+    box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.1);
+    width: 380px;
+    text-align: center;
+}
+
+.container h1 {
+    color: #004080;
+    font-size: 28px;
+    margin-bottom: 30px;
+}
+
+/* Formulario en columna */
+#loginForm {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+#loginForm label {
+    font-weight: bold;
+    color: #004080;
+    margin-bottom: 5px;
+    text-align: center;
+}
+
+#loginForm input {
+    padding: 10px;
     border: 1px solid #004080;
-    border-radius: 8px;
-    background: white;
+    border-radius: 6px;
+    font-size: 16px;
+    margin-bottom: 20px;
 }
 
+#loginForm button {
+    background-color: #004080;
+    color: white;
+    padding: 12px;
+    font-size: 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+#loginForm button:hover {
+    background-color: #0066cc;
+}
+
+#errorMessage {
+    margin-bottom: 15px;
+    font-size: 14px;
+    color: red;
+}
+
+/* ✅ Centrado vertical y horizontal del login */
+body.login-page, html.login-page {
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+    background-color: #ffffff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
