@@ -43,7 +43,7 @@ def main():
         nombre_db = datos["nombre_db"]
         grupo_contenedor = datos["grupo_contenedor"]
 
-        print("Reconstruyendo objeto ProjectExecutionRequest...", file=sys.stderr)
+        print("Reconstruyendo objeto ProjectExecutionRequest", file=sys.stderr)
         payload = dict_to_request(payload_dict)
         print("Reconstrucción exitosa", file=sys.stderr)
 
