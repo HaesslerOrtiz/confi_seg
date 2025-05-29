@@ -916,13 +916,7 @@ async def create_project(payload: ProjectExecutionRequest):
                     "errores": errores_imagenes
                 }
             )
-        '''
-        # Asignar (y validar) SRID validado a cada raster
-        for raster in payload.rasterGroupMappings:
-            tiff_path = os.path.join(UPLOAD_DIR, raster.imageName)
-            raster.srid = get_raster_srid(tiff_path)
-            debug_print(f"SRID asignado para '{raster.imageName}': {raster.srid}")
-        '''
+
         # Acciones sobre el servidor PostgreSQL
         crear_base_de_datos(payload.projectName)
         habilitar_extensiones(payload.projectName)
