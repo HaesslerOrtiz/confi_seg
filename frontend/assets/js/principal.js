@@ -844,18 +844,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // Éxito
-      let resumen = "✅ Proyecto creado exitosamente.\n";
-      if (Array.isArray(createResult.resumen_rasters)) {
-        resumen += "\n Resultado por imagen:\n";
-        for (const r of createResult.resumen_rasters) {
-          if (r.status === "éxito") {
-            resumen += `• ${r.imagen}: ✅ (${r.duracion_segundos} seg)\n`;
-          } else {
-            resumen += `• ${r.imagen}: ❌ ${r.error}\n`;
-          }
-        }
-      }
-
+      let resumen = createResult.msg || "✅ Proyecto creado exitosamente.";
       alert(resumen);
 
       } 

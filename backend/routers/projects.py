@@ -519,16 +519,19 @@ def gestionar_miembros_y_roles(payload: ProjectExecutionRequest, nombre_db: str,
                     TO "{nombre_rol}";
                 """)
 
+                # Solo otorgar permiso SELECT a segmentaciones de otros grupos si segmentan la misma imagen
                 if payload.studentTutor == "no":
                     for otro_grupo in mapping.groups:
                         otro_esquema = otro_grupo.groupName.lower()
+                        otra_tabla = f"{otro_esquema}_{raster}"
+
                         if otro_esquema != esquema:
-                            otra_tabla = f"{otro_esquema}_{raster}"
                             cur.execute(f"""
                                 GRANT SELECT
                                 ON {otro_esquema}.{otra_tabla}
                                 TO "{nombre_rol}";
                             """)
+
 
         # BLOQUE 4: Asignar roles de grupo a miembros (Estudiantes y Contribuyentes)
         for relacion in payload.memberGroupMappings:
@@ -645,36 +648,7 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
 
         # Obtener líderes/tutores
         lideres = [m.email for m in payload.members if m.role in ["Líder", "Tutor"]]
-        lideres_list = lideres  # ya es una lista de strings
-
-        # Obtener todos los roles de grupo generados
-        roles_segmentacion = set()
-        for rel in payload.memberGroupMappings:
-            miembro = next((m for m in payload.members if m.id == rel.memberId), None)
-            if miembro and miembro.role not in ["Líder", "Tutor"]:
-                grupo = next(
-                    (g.groupName for mapping in payload.rasterGroupMappings for g in mapping.groups if g.groupId == rel.groupId),
-                    None
-                )
-
-                if grupo is None:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"No se pudo determinar el nombre del grupo para groupId='{rel.groupId}' en la configuración del proyecto."
-                    )
-
-                roles_segmentacion.add(f"{grupo}_{fecha_actual}")
-
-        segmenter_groups_list = list(roles_segmentacion)
-
-        #Validar que todos los roles de segmentación realmente existen en PostgreSQL
-        for rol_seg in roles_segmentacion:
-            cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (rol_seg,))
-            if cur.fetchone() is None:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"El rol de segmentación '{rol_seg}' no existe en PostgreSQL. Asegúrate de haber ejecutado correctamente gestionar_miembros_y_roles()."
-                )
+        lideres_list = lideres
 
         # 3. Insertar una fila por cada imagen
         for mapping in payload.rasterGroupMappings:
@@ -686,6 +660,22 @@ def crear_configuracion(nombre_db: str, grupo_contenedor: str, payload: ProjectE
             # Eliminar cualquier configuración anterior con ese servantMap (por seguridad)
             cur.execute(f"DELETE FROM {grupo_contenedor}.parametros_configuracion WHERE servantMap = %s", (servant_map,))
 
+            # Determinar roles de los grupos que segmentan esta imagen
+            roles_segmentacion = set()
+            for grupo in mapping.groups:
+                roles_segmentacion.add(f"{grupo.groupName}_{fecha_actual}")
+
+            segmenter_groups_list = list(roles_segmentacion)
+
+            # Validar que los roles existan
+            for rol_seg in segmenter_groups_list:
+                cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (rol_seg,))
+                if cur.fetchone() is None:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"El rol de segmentación '{rol_seg}' no existe en PostgreSQL. Asegúrate de haber ejecutado correctamente gestionar_miembros_y_roles()."
+                    )
+                
             # Insertar nuevo registro
             cur.execute(f"""
                 INSERT INTO {grupo_contenedor}.parametros_configuracion (
@@ -978,9 +968,8 @@ async def create_project(payload: ProjectExecutionRequest):
             status_code=200,
             content={
                 "success": True,
-                "msg": f"El proyecto '{payload.projectName}' se generó correctamente.",
-                "resumen_rasters": resumen_rasters,
-                "resumen_qgis": resumen_qgis
+                "msg": f"✅ El proyecto '{payload.projectName}' se generó correctamente.",
+                #"resumen_qgis": resumen_qgis
             }
         )
 
